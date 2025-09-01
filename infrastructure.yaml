@@ -256,17 +256,17 @@ Resources:
 
   # Launch Template with dynamic AMI lookup
   WebServerLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
-      LaunchTemplateData:
-        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
-        InstanceType: !Ref InstanceType
-        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
-        SecurityGroupIds:
-          - !Ref InstanceSecurityGroup
-        UserData:
-          Fn::Base64: !Sub |
+  Type: AWS::EC2::LaunchTemplate
+  Properties:
+    LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
+    LaunchTemplateData:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
             #!/bin/bash -xe
             # Update system and install Apache
             yum update -y
