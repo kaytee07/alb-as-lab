@@ -302,7 +302,7 @@ Resources:
                     <h1>Auto Scaling Lab</h1>
                     
                     <div class="load-balancer">
-                        <h3>Load Balancer: ${WebAppLoadBalancer.DNSName}</h3>
+                       <h3>Load Balancer URL will be available after deployment</h3>
                     </div>
                     
                     <div class="instance-info">
