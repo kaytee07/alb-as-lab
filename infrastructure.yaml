@@ -5,6 +5,7 @@ Parameters:
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Name of an existing EC2 KeyPair to enable SSH access
+    Default: ""
   InstanceType:
     Type: String
     Default: t3.micro
@@ -14,6 +15,9 @@ Parameters:
     Type: String
     Default: AutoScalingLab
     Description: Environment name for tagging
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
 
 Resources:
   # VPC
@@ -250,7 +254,7 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-TG
 
-  # Launch Template with hardcoded AMI ID (Amazon Linux 2)
+  # Launch Template with dynamic AMI lookup
   WebServerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -258,7 +262,7 @@ Resources:
       LaunchTemplateData:
         ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
         InstanceType: !Ref InstanceType
-        KeyName: !Ref KeyName
+        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
         UserData:
@@ -337,14 +341,14 @@ Resources:
                     }
 
                     function startStressTest() {
-                        fetch('/stress?action=start')
+                        fetch('/cgi-bin/stress?action=start')
                             .then(response => response.text())
                             .then(data => alert('Stress test started: ' + data))
                             .catch(error => alert('Error: ' + error));
                     }
 
                     function stopStressTest() {
-                        fetch('/stress?action=stop')
+                        fetch('/cgi-bin/stress?action=stop')
                             .then(response => response.text())
                             .then(data => alert('Stress test stopped: ' + data))
                             .catch(error => alert('Error: ' + error));
@@ -357,14 +361,23 @@ Resources:
             </html>
             EOF
 
-            # Create CGI script for stress testing
+            # Create CGI directory and script
             mkdir -p /var/www/cgi-bin
             cat > /var/www/cgi-bin/stress << 'EOF'
             #!/bin/bash
-            echo "Content-type: text/html"
+            echo "Content-type: text/plain"
             echo ""
 
-            ACTION=$(echo "$QUERY_STRING" | grep -o "action=[a-z]*" | cut -d= -f2)
+            # Parse query string
+            QUERY_STRING="${QUERY_STRING:-}"
+            ACTION=""
+
+            # Extract action parameter
+            if [[ "$QUERY_STRING" == *"action=start"* ]]; then
+                ACTION="start"
+            elif [[ "$QUERY_STRING" == *"action=stop"* ]]; then
+                ACTION="stop"
+            fi
 
             case $ACTION in
                 "start")
@@ -374,26 +387,34 @@ Resources:
                     ;;
                 "stop")
                     # Stop all stress processes
-                    pkill -f stress
+                    pkill -f stress || true
                     echo "Stress test stopped on $(hostname)"
                     ;;
                 *)
-                    echo "Invalid action"
+                    echo "Invalid action. Use ?action=start or ?action=stop"
                     ;;
             esac
             EOF
 
+            # Set executable permissions
             chmod +x /var/www/cgi-bin/stress
 
-            # Enable CGI and start Apache
-            echo "LoadModule cgi_module modules/mod_cgi.so" >> /etc/httpd/conf/httpd.conf
-            echo "<Directory \"/var/www/cgi-bin\">" >> /etc/httpd/conf/httpd.conf
-            echo "    Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
-            echo "    AddHandler cgi-script .cgi .sh" >> /etc/httpd/conf/httpd.conf
-            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
+            # Configure Apache for CGI
+            cat > /etc/httpd/conf.d/cgi.conf << 'EOF'
+            ScriptAlias /cgi-bin/ /var/www/cgi-bin/
+            <Directory "/var/www/cgi-bin">
+                Options +ExecCGI
+                AddHandler cgi-script .cgi .sh .pl .py
+                Require all granted
+            </Directory>
+            EOF
 
+            # Enable and start Apache
             systemctl enable httpd
             systemctl start httpd
+
+            # Test CGI script
+            curl -s http://localhost/cgi-bin/stress?action=test
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
