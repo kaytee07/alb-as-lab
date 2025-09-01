@@ -272,8 +272,11 @@ Resources:
             yum update -y
             yum install -y httpd stress
 
-            # Create HTML page with instance info and stress test button
-            cat > /var/www/html/index.html << 'EOF'
+            # Create a PHP script to dynamically generate HTML with environment name
+            cat > /var/www/html/index.php << 'EOF'
+            <?php
+            $environmentName = "${EnvironmentName}";
+            ?>
             <!DOCTYPE html>
             <html>
             <head>
@@ -306,7 +309,7 @@ Resources:
                     </div>
                     
                     <div class="instance-info">
-                        <h2>Hello from ${EnvironmentName}</h2>
+                        <h2>Hello from <?php echo htmlspecialchars($environmentName); ?></h2>
                         <p><strong>IP Address:</strong> <span id="ip-address">Loading...</span></p>
                         <p><strong>Instance ID:</strong> <span id="instance-id">Loading...</span></p>
                         <p><strong>Availability Zone:</strong> <span id="availability-zone">Loading...</span></p>
@@ -361,6 +364,9 @@ Resources:
             </html>
             EOF
 
+            # Install PHP for dynamic content (lightweight version)
+            yum install -y php
+
             # Create CGI directory and script
             mkdir -p /var/www/cgi-bin
             cat > /var/www/cgi-bin/stress << 'EOF'
@@ -399,21 +405,31 @@ Resources:
             # Set executable permissions
             chmod +x /var/www/cgi-bin/stress
 
-            # Configure Apache for CGI
-            cat > /etc/httpd/conf.d/cgi.conf << 'EOF'
+            # Configure Apache for PHP and CGI
+            cat > /etc/httpd/conf.d/app.conf << 'EOF'
+            # PHP configuration
+            <FilesMatch \.php$>
+                SetHandler application/x-httpd-php
+            </FilesMatch>
+
+            # CGI configuration
             ScriptAlias /cgi-bin/ /var/www/cgi-bin/
             <Directory "/var/www/cgi-bin">
                 Options +ExecCGI
                 AddHandler cgi-script .cgi .sh .pl .py
                 Require all granted
             </Directory>
+
+            # Set index.php as default
+            DirectoryIndex index.php index.html
             EOF
 
             # Enable and start Apache
             systemctl enable httpd
             systemctl start httpd
 
-            # Test CGI script
+            # Test the application
+            curl -s http://localhost/ | head -5
             curl -s http://localhost/cgi-bin/stress?action=test
 
   # Auto Scaling Group
