@@ -262,7 +262,11 @@ Resources:
       LaunchTemplateData:
         ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
         InstanceType: !Ref InstanceType
-        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+        # The corrected section:
+        !If
+          - HasKeyName
+          - KeyName: !Ref KeyName
+          - !Ref "AWS::NoValue"
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
         UserData:
@@ -431,7 +435,6 @@ Resources:
             # Test the application
             curl -s http://localhost/ | head -5
             curl -s http://localhost/cgi-bin/stress?action=test
-
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
