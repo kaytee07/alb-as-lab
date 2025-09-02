@@ -1,5 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Auto Scaling Lab with VPC, Apache Web Server and CPU-based scaling
+Description: >
+  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Apache web servers
+  in eu-west-1 that scale based on 50% CPU utilization, displaying instance IP and ID.
 
 Parameters:
   KeyName:
@@ -260,23 +262,24 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
       LaunchTemplateData:
-        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
         InstanceType: !Ref InstanceType
-        # The corrected section:
-        !If
-          - HasKeyName
-          - KeyName: !Ref KeyName
-          - !Ref "AWS::NoValue"
+        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
-            # Update system and install Apache
-            yum update -y
-            yum install -y httpd stress
+            # Log output to /var/log/user-data.log
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/null) 2>&1
 
-            # Create a PHP script to dynamically generate HTML with environment name
+            # Install packages
+            yum update -y || { echo "Failed to update packages"; exit 1; }
+            yum install -y httpd php stress || { echo "Failed to install httpd, php, or stress"; exit 1; }
+            systemctl enable httpd || { echo "Failed to enable httpd"; exit 1; }
+            systemctl start httpd || { echo "Failed to start httpd"; exit 1; }
+
+            # Create index.php
             cat > /var/www/html/index.php << 'EOF'
             <?php
             $environmentName = "${EnvironmentName}";
@@ -324,7 +327,7 @@ Resources:
                     
                     <div class="info">
                         <p>Clicking "Stress Test CPU" will simulate high CPU load (80% for 60 seconds)</p>
-                        <p>When CPU utilization exceeds 30%, Auto Scaling will launch new instances</p>
+                        <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances</p>
                         <p>Refresh the page to see different instances serving requests</p>
                     </div>
                 </div>
@@ -368,11 +371,8 @@ Resources:
             </html>
             EOF
 
-            # Install PHP for dynamic content (lightweight version)
-            yum install -y php
-
-            # Create CGI directory and script
-            mkdir -p /var/www/cgi-bin
+            # Create CGI script
+            mkdir -p /var/www/cgi-bin || { echo "Failed to create cgi-bin directory"; exit 1; }
             cat > /var/www/cgi-bin/stress << 'EOF'
             #!/bin/bash
             echo "Content-type: text/plain"
@@ -407,7 +407,7 @@ Resources:
             EOF
 
             # Set executable permissions
-            chmod +x /var/www/cgi-bin/stress
+            chmod +x /var/www/cgi-bin/stress || { echo "Failed to set permissions on stress script"; exit 1; }
 
             # Configure Apache for PHP and CGI
             cat > /etc/httpd/conf.d/app.conf << 'EOF'
@@ -420,7 +420,7 @@ Resources:
             ScriptAlias /cgi-bin/ /var/www/cgi-bin/
             <Directory "/var/www/cgi-bin">
                 Options +ExecCGI
-                AddHandler cgi-script .cgi .sh .pl .py
+                AddHandler cgi-script .cgi .sh
                 Require all granted
             </Directory>
 
@@ -428,13 +428,18 @@ Resources:
             DirectoryIndex index.php index.html
             EOF
 
-            # Enable and start Apache
-            systemctl enable httpd
-            systemctl start httpd
+            # Set permissions for web content
+            chown -R apache:apache /var/www/html /var/www/cgi-bin || { echo "Failed to set ownership"; exit 1; }
+            find /var/www/html /var/www/cgi-bin -type d -exec chmod 755 {} \; || { echo "Failed to set directory permissions"; exit 1; }
+            find /var/www/html /var/www/cgi-bin -type f -exec chmod 644 {} \; || { echo "Failed to set file permissions"; exit 1; }
+
+            # Restart Apache
+            systemctl restart httpd || { echo "Failed to restart httpd"; exit 1; }
 
             # Test the application
-            curl -s http://localhost/ | head -5
-            curl -s http://localhost/cgi-bin/stress?action=test
+            curl -s http://localhost/ | head -5 || { echo "Failed to test application"; exit 1; }
+            curl -s http://localhost/cgi-bin/stress?action=test || { echo "Failed to test CGI script"; exit 1; }
+
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -481,7 +486,7 @@ Resources:
   HighCPUAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: Alarm when CPU exceeds 30%
+      AlarmDescription: Alarm when CPU exceeds 50%
       Namespace: AWS/EC2
       MetricName: CPUUtilization
       Dimensions:
@@ -490,7 +495,7 @@ Resources:
       Statistic: Average
       Period: 60
       EvaluationPeriods: 2
-      Threshold: 30
+      Threshold: 50
       ComparisonOperator: GreaterThanThreshold
       AlarmActions:
         - !Ref ScaleUpPolicy
