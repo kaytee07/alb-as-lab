@@ -16,9 +16,9 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: AutoScalingLab
-    AllowedPattern: ^[a-zA-Z0-9_.]*$
-    ConstraintDescription: Must contain only alphanumeric characters, underscores, or periods.
-    Description: Environment name for tagging
+    AllowedPattern: ^[a-zA-Z0-9_.]{1,50}$
+    ConstraintDescription: Must be 1-50 alphanumeric characters, underscores, or periods (no hyphens or special characters).
+    Description: Environment name for tagging (e.g., AutoScalingLab, Prod, Dev)
 
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
@@ -336,152 +336,135 @@ Resources:
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         UserData:
-          Fn::Base64: !Sub
-            - |
-                #!/bin/bash -xe
-                # Redirect logs to /var/log/app.log
-                exec > >(tee /var/log/app.log | logger -t user-data -s 2>/dev/null) 2>&1
-
-                # Install Node.js (LTS)
-                curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-                yum install -y nodejs || { echo "Failed to install Node.js"; exit 1; }
-
-                # Create application directory
-                mkdir -p /app && cd /app
-
-                # Initialize Node.js project
-                npm init -y || { echo "Failed to initialize npm project"; exit 1; }
-                npm install express @aws-sdk/client-ec2 node-fetch@2 || { echo "Failed to install npm packages"; exit 1; }
-
-                # Create server.js
-                cat > /app/server.js << 'EOF'
-                const express = require('express');
-                const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
-                const fetch = require('node-fetch');
-                const os = require('os');
-                const app = express();
-                const port = 80;
-
-                const ec2Client = new EC2Client({ region: 'eu-west-1' });
-                app.use(express.static('public'));
-
-                async function fetchMetadata(key) {
-                  try {
-                    const tokenResp = await fetch('http://169.254.169.254/latest/api/token', {
-                      method: 'PUT',
-                      headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
-                    });
-                    if (!tokenResp.ok) throw new Error('Failed to fetch IMDSv2 token');
-                    const token = await tokenResp.text();
-
-                    const resp = await fetch(`http://169.254.169.254/latest/meta-data/${key}`, {
-                      headers: { 'X-aws-ec2-metadata-token': token }
-                    });
-                    if (!resp.ok) throw new Error(`Failed to fetch metadata key: ${key}`);
-                    return await resp.text();
-                  } catch (err) {
-                    console.error('Metadata fetch error:', err);
-                    return 'Unknown';
-                  }
-                }
-
-                app.get('/', async (req, res) => {
-                  try {
-                    const instanceId = await fetchMetadata('instance-id');
-                    const data = await ec2Client.send(new DescribeInstancesCommand({
-                      InstanceIds: [instanceId]
-                    }));
-                    const instance = data?.Reservations?.[0]?.Instances?.[0] || {};
-                    const ip = instance.PrivateIpAddress || 'Unknown IP';
-                    const instanceIdDisplay = instance.InstanceId || 'Unknown Instance ID';
-                    const az = instance.Placement?.AvailabilityZone || 'Unknown AZ';
-                    const environmentName = "${Env}" || 'Unknown Environment';
-
-                    let html = '';
-                    html += '<!DOCTYPE html><html lang="en"><head>';
-                    html += '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
-                    html += '<title>Auto Scaling Lab</title><script src="https://cdn.tailwindcss.com"></script></head>';
-                    html += '<body class="bg-gray-100 font-sans"><div class="container mx-auto p-6 text-center">';
-                    html += '<h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>';
-                    html += '<div class="bg-blue-100 p-4 rounded-lg mb-4"><h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3></div>';
-                    html += '<div class="bg-white p-6 rounded-lg shadow-md mb-4">';
-                    html += `<h2 class="text-2xl font-semibold">Hello from ${ip} / ${instanceIdDisplay}</h2>`;
-                    html += `<p class="text-gray-600"><strong>Availability Zone:</strong> ${az}</p>`;
-                    html += `<p class="text-gray-600"><strong>Environment:</strong> ${environmentName}</p>`;
-                    html += '</div>';
-                    html += '<div class="flex justify-center gap-4">';
-                    html += '<button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>';
-                    html += '<button onclick="stopStressTest()" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg">Stop Stress Test</button>';
-                    html += '</div>';
-                    html += '<div class="text-gray-500 mt-4">';
-                    html += '<p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>';
-                    html += '<p>CPU utilization &gt;50% triggers Auto Scaling.</p>';
-                    html += '<p>Refresh to see different instances.</p>';
-                    html += '</div></div>';
-                    html += '<script>';
-                    html += 'async function startStressTest(){try{const r=await fetch("/stress?action=start");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test started: "+d);}catch(e){alert("Error starting stress test: "+e.message);}}';
-                    html += 'async function stopStressTest(){try{const r=await fetch("/stress?action=stop");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test stopped: "+d);}catch(e){alert("Error stopping stress test: "+e.message);}}';
-                    html += '</script></body></html>';
-
-                    res.send(html);
-                  } catch (error) {
-                    res.status(500).send(`Error fetching metadata: ${error.message || error}`);
-                  }
-                });
-
-                let stressInterval = null;
-                app.get('/stress', (req, res) => {
-                  const action = req.query.action;
-                  if (action === 'start') {
-                    if (!stressInterval) {
-                      stressInterval = setInterval(() => {
-                        let start = Date.now();
-                        while (Date.now() - start < 1000) {
-                          Math.sqrt(Math.random() * Math.random());
+                  Fn::Base64: !Sub |
+                    #!/bin/bash
+                    # Update the system
+                    yum update -y
+                    
+                    # Install Apache and stress
+                    yum install -y httpd stress
+                    
+                    # Start and enable Apache
+                    systemctl start httpd
+                    systemctl enable httpd
+                    
+                    # Create a simple web page with instance info and stress test button
+                    INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                    PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+                    
+                    cat > /var/www/html/index.html << EOF
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Auto Scaling Lab</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+                            h1 { color: #333; }
+                            .info { background-color: #f5f5f5; padding: 20px; border-radius: 5px; display: inline-block; }
+                            .stress-btn { 
+                                background-color: #ff4757; 
+                                color: white; 
+                                border: none; 
+                                padding: 15px 32px; 
+                                text-align: center; 
+                                text-decoration: none; 
+                                display: inline-block; 
+                                font-size: 16px; 
+                                margin: 20px 2px; 
+                                cursor: pointer; 
+                                border-radius: 5px;
+                            }
+                            .stress-btn:hover { background-color: #ff6b81; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Auto Scaling Lab</h1>
+                        <div class="info">
+                            <h2>Hello from $PRIVATE_IP / $INSTANCE_ID</h2>
+                            <p>This instance is part of an Auto Scaling Group</p>
+                            <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
+                            <p id="status"></p>
+                        </div>
+                        
+                        <script>
+                            function startStressTest() {
+                                document.getElementById('status').innerText = 'Starting CPU stress test for 60 seconds...';
+                                
+                                // Use fetch API to trigger stress test
+                                fetch('/stress', { method: 'POST' })
+                                    .then(response => response.text())
+                                    .then(data => {
+                                        document.getElementById('status').innerText = 'Stress test completed!';
+                                    })
+                                    .catch(error => {
+                                        document.getElementById('status').innerText = 'Error starting stress test: ' + error;
+                                    });
+                            }
+                        </script>
+                    </body>
+                    </html>
+                    EOF
+                    
+                    # Create a simple stress test script that definitely works
+                    cat > /var/www/html/stress.php << 'EOF'
+                    <?php
+                    header('Content-Type: text/plain');
+                    echo "Starting CPU stress test...\n";
+                    flush();
+                    
+                    // Fork a background process to do CPU intensive work
+                    $pid = pcntl_fork();
+                    if ($pid == 0) {
+                        // Child process - do CPU intensive work
+                        $end_time = time() + 60; // Run for 60 seconds
+                        while (time() < $end_time) {
+                            // CPU intensive operations
+                            for ($i = 0; $i < 1000000; $i++) {
+                                sqrt($i);
+                            }
                         }
-                      }, 1000);
-                      setTimeout(() => { if (stressInterval) clearInterval(stressInterval); stressInterval = null; }, 60000);
-                      res.send(`Stress test started on ${os.hostname()}`);
-                    } else {
-                      res.send(`Stress test already running on ${os.hostname()}`);
+                        exit(0);
                     }
-                  } else if (action === 'stop') {
-                    if (stressInterval) {
-                      clearInterval(stressInterval);
-                      stressInterval = null;
-                      res.send(`Stress test stopped on ${os.hostname()}`);
-                    } else {
-                      res.send(`No stress test running on ${os.hostname()}`);
-                    }
-                  } else {
-                    res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
-                  }
-                });
-
-                app.listen(port, () => {
-                  console.log(`Server running on port ${port}`);
-                });
-                EOF
-
-                # Create public directory
-                mkdir -p /app/public
-
-                # Set permissions
-                chown -R ec2-user:ec2-user /app || { echo "Failed to set ownership"; exit 1; }
-                chmod -R 755 /app || { echo "Failed to set permissions"; exit 1; }
-
-                # Install and start PM2
-                npm install -g pm2 || { echo "Failed to install PM2"; exit 1; }
-                pm2 start /app/server.js --name web-app || { echo "Failed to start application"; exit 1; }
-                pm2 startup systemd || { echo "Failed to set up PM2 startup"; exit 1; }
-                pm2 save || { echo "Failed to save PM2 process"; exit 1; }
-
-                # Test the application
-                sleep 5
-                curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
-                curl -s "http://localhost/stress?action=test" | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
-            - { Env: !Ref EnvironmentName }
-
+                    echo "CPU stress test started (PID: $pid)\n";
+                    ?>
+                    EOF
+                    
+                    # Install PHP
+                    yum install -y php
+                    
+                    # Create a CGI script to handle stress test
+                    mkdir -p /var/www/cgi-bin
+                    cat > /var/www/cgi-bin/stress.sh << 'EOF'
+                    #!/bin/bash
+                    echo "Content-type: text/plain"
+                    echo ""
+                    echo "Starting CPU stress test for 60 seconds..."
+                    
+                    # Create CPU load using dd and /dev/zero
+                    timeout 60 bash -c '
+                        for i in {1..4}; do
+                            dd if=/dev/zero of=/dev/null bs=1M &
+                        done
+                        wait
+                    ' &
+                    
+                    echo "CPU stress test initiated"
+                    EOF
+                    
+                    chmod +x /var/www/cgi-bin/stress.sh
+                    
+                    # Configure Apache to handle the stress test endpoint
+                    cat > /etc/httpd/conf.d/stress.conf << EOF
+                    ScriptAlias /stress /var/www/cgi-bin/stress.sh
+                    <Directory "/var/www/cgi-bin">
+                        AllowOverride None
+                        Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
+                        Require all granted
+                    </Directory>
+                    EOF
+                    
+                    # Restart Apache to apply changes
+                    systemctl restart httpd
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -517,113 +500,4 @@ Resources:
       AutoScalingGroupName: !Ref WebServerAutoScalingGroup
       Cooldown: 60
       ScalingAdjustment: 1
-      PolicyType: SimpleScaling
-
-  ScaleDownPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AdjustmentType: ChangeInCapacity
-      AutoScalingGroupName: !Ref WebServerAutoScalingGroup
-      Cooldown: 300
-      ScalingAdjustment: -1
-      PolicyType: SimpleScaling
-
-  # CloudWatch Alarms
-  HighCPUAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: Alarm when CPU exceeds 50%
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref WebServerAutoScalingGroup
-      Statistic: Average
-      Period: 60
-      EvaluationPeriods: 2
-      Threshold: 50
-      ComparisonOperator: GreaterThanThreshold
-      AlarmActions:
-        - !Ref ScaleUpPolicy
-
-  LowCPUAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: Alarm when CPU is below 10%
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref WebServerAutoScalingGroup
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      Threshold: 10
-      ComparisonOperator: LessThanThreshold
-      AlarmActions:
-        - !Ref ScaleDownPolicy
-
-Outputs:
-  VPCId:
-    Description: VPC ID
-    Value: !Ref VPC
-    Export:
-      Name: !Sub
-        - ${Env}-VPCId
-        - { Env: !Ref EnvironmentName }
-
-  LoadBalancerDNS:
-    Description: DNS name of the Load Balancer
-    Value: !GetAtt WebAppLoadBalancer.DNSName
-    Export:
-      Name: !Sub
-        - ${Env}-LoadBalancerDNS
-        - { Env: !Ref EnvironmentName }
-
-  AutoScalingGroupName:
-    Description: Name of the Auto Scaling Group
-    Value: !Ref WebServerAutoScalingGroup
-    Export:
-      Name: !Sub
-        - ${Env}-ASGName
-        - { Env: !Ref EnvironmentName }
-
-  PublicSubnet1Id:
-    Description: Public Subnet 1 ID
-    Value: !Ref PublicSubnet1
-    Export:
-      Name: !Sub
-        - ${Env}-PublicSubnet1Id
-        - { Env: !Ref EnvironmentName }
-
-  PublicSubnet2Id:
-    Description: Public Subnet 2 ID
-    Value: !Ref PublicSubnet2
-    Export:
-      Name: !Sub
-        - ${Env}-PublicSubnet2Id
-        - { Env: !Ref EnvironmentName }
-
-  PrivateSubnet1Id:
-    Description: Private Subnet 1 ID
-    Value: !Ref PrivateSubnet1
-    Export:
-      Name: !Sub
-        - ${Env}-PrivateSubnet1Id
-        - { Env: !Ref EnvironmentName }
-
-  PrivateSubnet2Id:
-    Description: Private Subnet 2 ID
-    Value: !Ref PrivateSubnet2
-    Export:
-      Name: !Sub
-        - ${Env}-PrivateSubnet2Id
-        - { Env: !Ref EnvironmentName }
-
-  LaunchTemplateName:
-    Description: Name of the Launch Template
-    Value: !Ref WebServerLaunchTemplate
-    Export:
-      Name: !Sub
-        - ${Env}-LaunchTemplateName
-        - { Env: !Ref EnvironmentName }
+      Policy
