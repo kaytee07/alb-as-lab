@@ -285,12 +285,14 @@ Resources:
 
                 # Initialize Node.js project
                 npm init -y || { echo "Failed to initialize npm project"; exit 1; }
-                npm install express @aws-sdk/client-ec2 || { echo "Failed to install npm packages"; exit 1; }
+                # include node-fetch@2 for IMDSv2 support
+                npm install express @aws-sdk/client-ec2 node-fetch@2 || { echo "Failed to install npm packages"; exit 1; }
 
                 # Create server.js
                 cat > /app/server.js << 'EOF'
                 const express = require('express');
                 const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
+                const fetch = require('node-fetch'); // node-fetch v2 (commonjs)
                 const os = require('os');
                 const app = express();
                 const port = 80;
@@ -298,75 +300,72 @@ Resources:
                 const ec2Client = new EC2Client({ region: process.env.AWS_REGION || 'us-east-1' });
                 app.use(express.static('public'));
 
+                // IMDSv2-safe metadata fetch
+                async function fetchMetadata(key) {
+                  try {
+                    const tokenResp = await fetch('http://169.254.169.254/latest/api/token', {
+                      method: 'PUT',
+                      headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
+                    });
+                    if (!tokenResp.ok) throw new Error('Failed to fetch IMDSv2 token');
+                    const token = await tokenResp.text();
+
+                    const resp = await fetch('http://169.254.169.254/latest/meta-data/' + key, {
+                      headers: { 'X-aws-ec2-metadata-token': token }
+                    });
+                    if (!resp.ok) throw new Error('Failed to fetch metadata key: ' + key);
+                    const text = await resp.text();
+                    return text.trim();
+                  } catch (err) {
+                    console.error('Metadata fetch error:', err);
+                    throw err;
+                  }
+                }
+
                 app.get('/', async (req, res) => {
                   try {
                     const instanceId = await fetchMetadata('instance-id');
                     const data = await ec2Client.send(new DescribeInstancesCommand({
                       InstanceIds: [instanceId]
                     }));
-                    const instance = data.Reservations[0].Instances[0];
+                    const instance = data.Reservations[0].Instances[0] || {};
                     const ip = instance.PrivateIpAddress || 'Unknown IP';
                     const instanceIdDisplay = instance.InstanceId || 'Unknown Instance ID';
-                    const az = instance.Placement.AvailabilityZone || 'Unknown AZ';
+                    const az = (instance.Placement && instance.Placement.AvailabilityZone) ? instance.Placement.AvailabilityZone : 'Unknown AZ';
                     const environmentName = "${Env}" || 'Unknown Environment';
 
-                    res.send(`
-                      <!DOCTYPE html>
-                      <html lang="en">
-                      <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>Auto Scaling Lab</title>
-                        <script src="https://cdn.tailwindcss.com"></script>
-                      </head>
-                      <body class="bg-gray-100 font-sans">
-                        <div class="container mx-auto p-6 text-center">
-                          <h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>
-                          <div class="bg-blue-100 p-4 rounded-lg mb-4">
-                            <h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3>
-                          </div>
-                          <div class="bg-white p-6 rounded-lg shadow-md mb-4">
-                            <h2 class="text-2xl font-semibold">Hello from $${ip} / $${instanceIdDisplay}</h2>
-                            <p class="text-gray-600"><strong>Availability Zone:</strong> $${az}</p>
-                            <p class="text-gray-600"><strong>Environment:</strong> $${environmentName}</p>
-                          </div>
-                          <div class="flex justify-center gap-4">
-                            <button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>
-                            <button onclick="stopStressTest()" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg">Stop Stress Test</button>
-                          </div>
-                          <div class="text-gray-500 mt-4">
-                            <p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>
-                            <p>CPU utilization &gt;50% triggers Auto Scaling.</p>
-                            <p>Refresh to see different instances.</p>
-                          </div>
-                        </div>
-                        <script>
-                          async function startStressTest() {
-                            try {
-                              const response = await fetch('/stress?action=start');
-                              if (!response.ok) throw new Error('HTTP error ' + response.status);
-                              const data = await response.text();
-                              alert('Stress test started: ' + data);
-                            } catch (error) {
-                              alert('Error starting stress test: ' + error.message);
-                            }
-                          }
-                          async function stopStressTest() {
-                            try {
-                              const response = await fetch('/stress?action=stop');
-                              if (!response.ok) throw new Error('HTTP error ' + response.status);
-                              const data = await response.text();
-                              alert('Stress test stopped: ' + data);
-                            } catch (error) {
-                              alert('Error stopping stress test: ' + error.message);
-                            }
-                          }
-                        </script>
-                      </body>
-                      </html>
-                    `);
+                    // Build HTML with concatenation to avoid ${...} sequences
+                    let html = '';
+                    html += '<!DOCTYPE html><html lang="en"><head>';
+                    html += '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
+                    html += '<title>Auto Scaling Lab</title><script src="https://cdn.tailwindcss.com"></script></head>';
+                    html += '<body class="bg-gray-100 font-sans"><div class="container mx-auto p-6 text-center">';
+                    html += '<h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>';
+                    html += '<div class="bg-blue-100 p-4 rounded-lg mb-4"><h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3></div>';
+                    html += '<div class="bg-white p-6 rounded-lg shadow-md mb-4">';
+                    html += '<h2 class="text-2xl font-semibold">Hello from ' + ip + ' / ' + instanceIdDisplay + '</h2>';
+                    html += '<p class="text-gray-600"><strong>Availability Zone:</strong> ' + az + '</p>';
+                    html += '<p class="text-gray-600"><strong>Environment:</strong> ' + environmentName + '</p>';
+                    html += '</div>';
+                    html += '<div class="flex justify-center gap-4">';
+                    html += '<button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>';
+                    html += '<button onclick="stopStressTest()" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg">Stop Stress Test</button>';
+                    html += '</div>';
+                    html += '<div class="text-gray-500 mt-4">';
+                    html += '<p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>';
+                    html += '<p>CPU utilization &gt;50% triggers Auto Scaling.</p>';
+                    html += '<p>Refresh to see different instances.</p>';
+                    html += '</div></div>';
+
+                    // Add client-side JS (keeps no ${...} tokens)
+                    html += '<script>';
+                    html += 'async function startStressTest(){try{const r=await fetch("/stress?action=start");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test started: "+d);}catch(e){alert("Error starting stress test: "+e.message);}}';
+                    html += 'async function stopStressTest(){try{const r=await fetch("/stress?action=stop");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test stopped: "+d);}catch(e){alert("Error stopping stress test: "+e.message);}}';
+                    html += '</script></body></html>';
+
+                    res.send(html);
                   } catch (error) {
-                    res.status(500).send('Error fetching metadata: ' + error.message);
+                    res.status(500).send('Error fetching metadata: ' + (error && error.message ? error.message : error));
                   }
                 });
 
@@ -382,30 +381,25 @@ Resources:
                         }
                       }, 1000);
                       setTimeout(() => clearInterval(stressInterval), 60000);
-                      res.send(`Stress test started on $${os.hostname()}`);
+                      res.send('Stress test started on ' + os.hostname());
                     } else {
-                      res.send(`Stress test already running on $${os.hostname()}`);
+                      res.send('Stress test already running on ' + os.hostname());
                     }
                   } else if (action === 'stop') {
                     if (stressInterval) {
                       clearInterval(stressInterval);
                       stressInterval = null;
-                      res.send(`Stress test stopped on $${os.hostname()}`);
+                      res.send('Stress test stopped on ' + os.hostname());
                     } else {
-                      res.send(`No stress test running on $${os.hostname()}`);
+                      res.send('No stress test running on ' + os.hostname());
                     }
                   } else {
                     res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
                   }
                 });
 
-                async function fetchMetadata(key) {
-                  const response = await fetch(`http://169.254.169.254/latest/meta-data/$${key}`);
-                  return response.text();
-                }
-
                 app.listen(port, () => {
-                  console.log(`Server running on port $${port}`);
+                  console.log('Server running on port ' + port);
                 });
                 EOF
 
@@ -423,9 +417,11 @@ Resources:
                 pm2 save || { echo "Failed to save PM2 process"; exit 1; }
 
                 # Test the application
+                sleep 3
                 curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
-                curl -s http://localhost/stress?action=test | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
+                curl -s "http://localhost/stress?action=test" | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
             - { Env: !Ref EnvironmentName }
+
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
