@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Apache web servers
+  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Node.js web servers
   in eu-west-1 that scale based on 50% CPU utilization, displaying instance IP and ID.
 
 Parameters:
@@ -16,6 +16,8 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: AutoScalingLab
+    AllowedPattern: ^[a-zA-Z0-9_.]*$
+    ConstraintDescription: Must contain only alphanumeric characters, underscores, or periods.
     Description: Environment name for tagging
 
 Conditions:
@@ -57,7 +59,9 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PublicSubnet1
+          Value: !Sub
+            - ${Env}-PublicSubnet1
+            - { Env: !Ref EnvironmentName }
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -68,7 +72,9 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PublicSubnet2
+          Value: !Sub
+            - ${Env}-PublicSubnet2
+            - { Env: !Ref EnvironmentName }
 
   # Private Subnets
   PrivateSubnet1:
@@ -79,7 +85,9 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateSubnet1
+          Value: !Sub
+            - ${Env}-PrivateSubnet1
+            - { Env: !Ref EnvironmentName }
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -89,7 +97,9 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateSubnet2
+          Value: !Sub
+            - ${Env}-PrivateSubnet2
+            - { Env: !Ref EnvironmentName }
 
   # NAT Gateway in Public Subnet 1
   EIP1:
@@ -98,7 +108,9 @@ Resources:
       Domain: vpc
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-NAT-EIP1
+          Value: !Sub
+            - ${Env}-NAT-EIP1
+            - { Env: !Ref EnvironmentName }
 
   NATGateway1:
     Type: AWS::EC2::NatGateway
@@ -107,7 +119,9 @@ Resources:
       SubnetId: !Ref PublicSubnet1
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-NATGateway1
+          Value: !Sub
+            - ${Env}-NATGateway1
+            - { Env: !Ref EnvironmentName }
 
   # Route Tables
   PublicRouteTable:
@@ -116,7 +130,9 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PublicRT
+          Value: !Sub
+            - ${Env}-PublicRT
+            - { Env: !Ref EnvironmentName }
 
   PrivateRouteTable1:
     Type: AWS::EC2::RouteTable
@@ -124,7 +140,9 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateRT1
+          Value: !Sub
+            - ${Env}-PrivateRT1
+            - { Env: !Ref EnvironmentName }
 
   PrivateRouteTable2:
     Type: AWS::EC2::RouteTable
@@ -132,7 +150,9 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateRT2
+          Value: !Sub
+            - ${Env}-PrivateRT2
+            - { Env: !Ref EnvironmentName }
 
   # Routes
   PublicRoute:
@@ -195,7 +215,9 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-ALB-SG
+          Value: !Sub
+            - ${Env}-ALB-SG
+            - { Env: !Ref EnvironmentName }
 
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -213,13 +235,49 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-Instance-SG
+          Value: !Sub
+            - ${Env}-Instance-SG
+            - { Env: !Ref EnvironmentName }
+
+  # IAM Role for EC2 Instances
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EC2DescribeInstances
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub
+            - ${Env}-EC2Role
+            - { Env: !Ref EnvironmentName }
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
 
   # Application Load Balancer
   WebAppLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub ${EnvironmentName}-ALB
+      Name: !Sub
+        - ${Env}-ALB
+        - { Env: !Ref EnvironmentName }
       Scheme: internet-facing
       Subnets:
         - !Ref PublicSubnet1
@@ -228,7 +286,9 @@ Resources:
         - !Ref ALBSecurityGroup
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-ALB
+          Value: !Sub
+            - ${Env}-ALB
+            - { Env: !Ref EnvironmentName }
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -243,7 +303,9 @@ Resources:
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub ${EnvironmentName}-TG
+      Name: !Sub
+        - ${Env}-TG
+        - { Env: !Ref EnvironmentName }
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VPC
@@ -254,7 +316,9 @@ Resources:
       UnhealthyThresholdCount: 2
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-TG
+          Value: !Sub
+            - ${Env}-TG
+            - { Env: !Ref EnvironmentName }
 
   # Launch Template with dynamic AMI lookup
   WebServerLaunchTemplate:
@@ -269,6 +333,8 @@ Resources:
         KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
         UserData:
           Fn::Base64: !Sub
             - |
@@ -285,22 +351,20 @@ Resources:
 
                 # Initialize Node.js project
                 npm init -y || { echo "Failed to initialize npm project"; exit 1; }
-                # include node-fetch@2 for IMDSv2 support
                 npm install express @aws-sdk/client-ec2 node-fetch@2 || { echo "Failed to install npm packages"; exit 1; }
 
                 # Create server.js
                 cat > /app/server.js << 'EOF'
                 const express = require('express');
                 const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
-                const fetch = require('node-fetch'); // node-fetch v2 (CommonJS)
+                const fetch = require('node-fetch');
                 const os = require('os');
                 const app = express();
                 const port = 80;
 
-                const ec2Client = new EC2Client({ region: process.env.AWS_REGION || 'us-east-1' });
+                const ec2Client = new EC2Client({ region: 'eu-west-1' });
                 app.use(express.static('public'));
 
-                // IMDSv2-safe metadata fetch
                 async function fetchMetadata(key) {
                   try {
                     const tokenResp = await fetch('http://169.254.169.254/latest/api/token', {
@@ -310,15 +374,14 @@ Resources:
                     if (!tokenResp.ok) throw new Error('Failed to fetch IMDSv2 token');
                     const token = await tokenResp.text();
 
-                    const resp = await fetch('http://169.254.169.254/latest/meta-data/' + key, {
+                    const resp = await fetch(`http://169.254.169.254/latest/meta-data/${key}`, {
                       headers: { 'X-aws-ec2-metadata-token': token }
                     });
-                    if (!resp.ok) throw new Error('Failed to fetch metadata key: ' + key);
-                    const text = await resp.text();
-                    return text.trim();
+                    if (!resp.ok) throw new Error(`Failed to fetch metadata key: ${key}`);
+                    return await resp.text();
                   } catch (err) {
                     console.error('Metadata fetch error:', err);
-                    throw err;
+                    return 'Unknown';
                   }
                 }
 
@@ -328,13 +391,12 @@ Resources:
                     const data = await ec2Client.send(new DescribeInstancesCommand({
                       InstanceIds: [instanceId]
                     }));
-                    const instance = (data && data.Reservations && data.Reservations[0] && data.Reservations[0].Instances && data.Reservations[0].Instances[0]) || {};
+                    const instance = data?.Reservations?.[0]?.Instances?.[0] || {};
                     const ip = instance.PrivateIpAddress || 'Unknown IP';
                     const instanceIdDisplay = instance.InstanceId || 'Unknown Instance ID';
-                    const az = (instance.Placement && instance.Placement.AvailabilityZone) ? instance.Placement.AvailabilityZone : 'Unknown AZ';
+                    const az = instance.Placement?.AvailabilityZone || 'Unknown AZ';
                     const environmentName = "${Env}" || 'Unknown Environment';
 
-                    // Build HTML via concatenation to avoid ${...} tokens
                     let html = '';
                     html += '<!DOCTYPE html><html lang="en"><head>';
                     html += '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
@@ -343,9 +405,9 @@ Resources:
                     html += '<h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>';
                     html += '<div class="bg-blue-100 p-4 rounded-lg mb-4"><h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3></div>';
                     html += '<div class="bg-white p-6 rounded-lg shadow-md mb-4">';
-                    html += '<h2 class="text-2xl font-semibold">Hello from ' + ip + ' / ' + instanceIdDisplay + '</h2>';
-                    html += '<p class="text-gray-600"><strong>Availability Zone:</strong> ' + az + '</p>';
-                    html += '<p class="text-gray-600"><strong>Environment:</strong> ' + environmentName + '</p>';
+                    html += `<h2 class="text-2xl font-semibold">Hello from ${ip} / ${instanceIdDisplay}</h2>`;
+                    html += `<p class="text-gray-600"><strong>Availability Zone:</strong> ${az}</p>`;
+                    html += `<p class="text-gray-600"><strong>Environment:</strong> ${environmentName}</p>`;
                     html += '</div>';
                     html += '<div class="flex justify-center gap-4">';
                     html += '<button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>';
@@ -356,8 +418,6 @@ Resources:
                     html += '<p>CPU utilization &gt;50% triggers Auto Scaling.</p>';
                     html += '<p>Refresh to see different instances.</p>';
                     html += '</div></div>';
-
-                    // Client-side JS (no ${...} tokens)
                     html += '<script>';
                     html += 'async function startStressTest(){try{const r=await fetch("/stress?action=start");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test started: "+d);}catch(e){alert("Error starting stress test: "+e.message);}}';
                     html += 'async function stopStressTest(){try{const r=await fetch("/stress?action=stop");if(!r.ok)throw new Error("HTTP error "+r.status);const d=await r.text();alert("Stress test stopped: "+d);}catch(e){alert("Error stopping stress test: "+e.message);}}';
@@ -365,7 +425,7 @@ Resources:
 
                     res.send(html);
                   } catch (error) {
-                    res.status(500).send('Error fetching metadata: ' + (error && error.message ? error.message : error));
+                    res.status(500).send(`Error fetching metadata: ${error.message || error}`);
                   }
                 });
 
@@ -380,18 +440,18 @@ Resources:
                           Math.sqrt(Math.random() * Math.random());
                         }
                       }, 1000);
-                      setTimeout(() => clearInterval(stressInterval), 60000);
-                      res.send('Stress test started on ' + os.hostname());
+                      setTimeout(() => { if (stressInterval) clearInterval(stressInterval); stressInterval = null; }, 60000);
+                      res.send(`Stress test started on ${os.hostname()}`);
                     } else {
-                      res.send('Stress test already running on ' + os.hostname());
+                      res.send(`Stress test already running on ${os.hostname()}`);
                     }
                   } else if (action === 'stop') {
                     if (stressInterval) {
                       clearInterval(stressInterval);
                       stressInterval = null;
-                      res.send('Stress test stopped on ' + os.hostname());
+                      res.send(`Stress test stopped on ${os.hostname()}`);
                     } else {
-                      res.send('No stress test running on ' + os.hostname());
+                      res.send(`No stress test running on ${os.hostname()}`);
                     }
                   } else {
                     res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
@@ -399,7 +459,7 @@ Resources:
                 });
 
                 app.listen(port, () => {
-                  console.log('Server running on port ' + port);
+                  console.log(`Server running on port ${port}`);
                 });
                 EOF
 
@@ -417,18 +477,18 @@ Resources:
                 pm2 save || { echo "Failed to save PM2 process"; exit 1; }
 
                 # Test the application
-                sleep 3
+                sleep 5
                 curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
                 curl -s "http://localhost/stress?action=test" | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
             - { Env: !Ref EnvironmentName }
-
-
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub ${EnvironmentName}-ASG
+      AutoScalingGroupName: !Sub
+        - ${Env}-ASG
+        - { Env: !Ref EnvironmentName }
       LaunchTemplate:
         LaunchTemplateId: !Ref WebServerLaunchTemplate
         Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
@@ -444,7 +504,9 @@ Resources:
       HealthCheckGracePeriod: 300
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-WebServer
+          Value: !Sub
+            - ${Env}-WebServer
+            - { Env: !Ref EnvironmentName }
           PropagateAtLaunch: true
 
   # Scaling Policies
@@ -506,46 +568,62 @@ Outputs:
     Description: VPC ID
     Value: !Ref VPC
     Export:
-      Name: !Sub ${EnvironmentName}-VPCId
+      Name: !Sub
+        - ${Env}-VPCId
+        - { Env: !Ref EnvironmentName }
 
   LoadBalancerDNS:
     Description: DNS name of the Load Balancer
     Value: !GetAtt WebAppLoadBalancer.DNSName
     Export:
-      Name: !Sub ${EnvironmentName}-LoadBalancerDNS
+      Name: !Sub
+        - ${Env}-LoadBalancerDNS
+        - { Env: !Ref EnvironmentName }
 
   AutoScalingGroupName:
     Description: Name of the Auto Scaling Group
     Value: !Ref WebServerAutoScalingGroup
     Export:
-      Name: !Sub ${EnvironmentName}-ASGName
+      Name: !Sub
+        - ${Env}-ASGName
+        - { Env: !Ref EnvironmentName }
 
   PublicSubnet1Id:
     Description: Public Subnet 1 ID
     Value: !Ref PublicSubnet1
     Export:
-      Name: !Sub ${EnvironmentName}-PublicSubnet1Id
+      Name: !Sub
+        - ${Env}-PublicSubnet1Id
+        - { Env: !Ref EnvironmentName }
 
   PublicSubnet2Id:
     Description: Public Subnet 2 ID
     Value: !Ref PublicSubnet2
     Export:
-      Name: !Sub ${EnvironmentName}-PublicSubnet2Id
+      Name: !Sub
+        - ${Env}-PublicSubnet2Id
+        - { Env: !Ref EnvironmentName }
 
   PrivateSubnet1Id:
     Description: Private Subnet 1 ID
     Value: !Ref PrivateSubnet1
     Export:
-      Name: !Sub ${EnvironmentName}-PrivateSubnet1Id
+      Name: !Sub
+        - ${Env}-PrivateSubnet1Id
+        - { Env: !Ref EnvironmentName }
 
   PrivateSubnet2Id:
     Description: Private Subnet 2 ID
     Value: !Ref PrivateSubnet2
     Export:
-      Name: !Sub ${EnvironmentName}-PrivateSubnet2Id
+      Name: !Sub
+        - ${Env}-PrivateSubnet2Id
+        - { Env: !Ref EnvironmentName }
 
   LaunchTemplateName:
     Description: Name of the Launch Template
     Value: !Ref WebServerLaunchTemplate
     Export:
-      Name: !Sub ${EnvironmentName}-LaunchTemplateName
+      Name: !Sub
+        - ${Env}-LaunchTemplateName
+        - { Env: !Ref EnvironmentName }
