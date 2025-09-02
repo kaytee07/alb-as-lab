@@ -279,10 +279,16 @@ Resources:
             systemctl enable httpd || { echo "Failed to enable httpd"; exit 1; }
             systemctl start httpd || { echo "Failed to start httpd"; exit 1; }
 
-            # Create index.php
+            # Install SELinux tools if needed
+            yum install -y policycoreutils-python-utils || { echo "Failed to install SELinux tools"; exit 1; }
+
+            # Create index.php with server-side metadata fetching
             cat > /var/www/html/index.php << 'EOF'
             <?php
             $environmentName = "${EnvironmentName}";
+            $ip = file_get_contents('http://169.254.169.254/latest/meta-data/local-ipv4');
+            $instance_id = file_get_contents('http://169.254.169.254/latest/meta-data/instance-id');
+            $az = file_get_contents('http://169.254.169.254/latest/meta-data/placement/availability-zone');
             ?>
             <!DOCTYPE html>
             <html>
@@ -317,9 +323,8 @@ Resources:
                     
                     <div class="instance-info">
                         <h2>Hello from <?php echo htmlspecialchars($environmentName); ?></h2>
-                        <p><strong>IP Address:</strong> <span id="ip-address">Loading...</span></p>
-                        <p><strong>Instance ID:</strong> <span id="instance-id">Loading...</span></p>
-                        <p><strong>Availability Zone:</strong> <span id="availability-zone">Loading...</span></p>
+                        <p><strong>IP Address / Instance ID:</strong> <?php echo $ip . ' / ' . $instance_id; ?></p>
+                        <p><strong>Availability Zone:</strong> <?php echo $az; ?></p>
                     </div>
                     
                     <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
@@ -333,53 +338,33 @@ Resources:
                 </div>
 
                 <script>
-                    // Fetch instance metadata
-                    async function fetchInstanceMetadata() {
-                        try {
-                            const [ipResponse, idResponse, azResponse] = await Promise.all([
-                                fetch('http://169.254.169.254/latest/meta-data/local-ipv4'),
-                                fetch('http://169.254.169.254/latest/meta-data/instance-id'),
-                                fetch('http://169.254.169.254/latest/meta-data/placement/availability-zone')
-                            ]);
-                            
-                            document.getElementById('ip-address').textContent = await ipResponse.text();
-                            document.getElementById('instance-id').textContent = await idResponse.text();
-                            document.getElementById('availability-zone').textContent = await azResponse.text();
-                        } catch (error) {
-                            console.error('Error fetching metadata:', error);
-                        }
-                    }
-
                     function startStressTest() {
                         fetch('/cgi-bin/stress?action=start')
                             .then(response => response.text())
                             .then(data => alert('Stress test started: ' + data))
-                            .catch(error => alert('Error: ' + error));
+                            .catch(error => alert('Error starting stress test: ' + error.message));
                     }
 
                     function stopStressTest() {
                         fetch('/cgi-bin/stress?action=stop')
                             .then(response => response.text())
                             .then(data => alert('Stress test stopped: ' + data))
-                            .catch(error => alert('Error: ' + error));
+                            .catch(error => alert('Error stopping stress test: ' + error.message));
                     }
-
-                    // Load instance metadata when page loads
-                    document.addEventListener('DOMContentLoaded', fetchInstanceMetadata);
                 </script>
             </body>
             </html>
             EOF
 
             # Create CGI directory and script
-            mkdir -p /var/www/cgi-bin
+            mkdir -p /var/www/cgi-bin || { echo "Failed to create cgi-bin directory"; exit 1; }
             cat > /var/www/cgi-bin/stress << 'EOF'
             #!/bin/bash
             echo "Content-type: text/plain"
             echo ""
 
             # Parse query string
-            QUERY_STRING="${QUERY_STRING:-}"
+            QUERY_STRING="$QUERY_STRING"
             ACTION=""
 
             # Extract action parameter
@@ -406,8 +391,9 @@ Resources:
             esac
             EOF
 
-            # Set executable permissions
+            # Set executable permissions and SELinux context for CGI
             chmod +x /var/www/cgi-bin/stress || { echo "Failed to set permissions on stress script"; exit 1; }
+            chcon -R -t httpd_sys_script_exec_t /var/www/cgi-bin || { echo "Failed to set SELinux context for CGI"; exit 1; }
 
             # Configure Apache for PHP and CGI
             cat > /etc/httpd/conf.d/app.conf << 'EOF'
@@ -420,7 +406,7 @@ Resources:
             ScriptAlias /cgi-bin/ /var/www/cgi-bin/
             <Directory "/var/www/cgi-bin">
                 Options +ExecCGI
-                AddHandler cgi-script .cgi .sh .pl .py
+                AddHandler cgi-script .cgi .sh
                 Require all granted
             </Directory>
 
@@ -436,7 +422,7 @@ Resources:
             # Restart Apache
             systemctl restart httpd || { echo "Failed to restart httpd"; exit 1; }
 
-            # Test the application
+            # Test the application and CGI
             curl -s http://localhost/ | head -5 || { echo "Failed to test application"; exit 1; }
             curl -s http://localhost/cgi-bin/stress?action=test || { echo "Failed to test CGI script"; exit 1; }
 
