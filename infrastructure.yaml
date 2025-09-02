@@ -326,9 +326,9 @@ Resources:
                             <h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3>
                           </div>
                           <div class="bg-white p-6 rounded-lg shadow-md mb-4">
-                            <h2 class="text-2xl font-semibold">Hello from ${!ip} / ${!instanceIdDisplay}</h2>
-                            <p class="text-gray-600"><strong>Availability Zone:</strong> ${!az}</p>
-                            <p class="text-gray-600"><strong>Environment:</strong> ${!environmentName}</p>
+                            <h2 class="text-2xl font-semibold">Hello from $${ip} / $${instanceIdDisplay}</h2>
+                            <p class="text-gray-600"><strong>Availability Zone:</strong> $${az}</p>
+                            <p class="text-gray-600"><strong>Environment:</strong> $${environmentName}</p>
                           </div>
                           <div class="flex justify-center gap-4">
                             <button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>
@@ -336,7 +336,7 @@ Resources:
                           </div>
                           <div class="text-gray-500 mt-4">
                             <p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>
-                            <p>CPU utilization >50% triggers Auto Scaling.</p>
+                            <p>CPU utilization &gt;50% triggers Auto Scaling.</p>
                             <p>Refresh to see different instances.</p>
                           </div>
                         </div>
@@ -382,17 +382,17 @@ Resources:
                         }
                       }, 1000);
                       setTimeout(() => clearInterval(stressInterval), 60000);
-                      res.send(`Stress test started on ${!os.hostname()}`);
+                      res.send(`Stress test started on $${os.hostname()}`);
                     } else {
-                      res.send(`Stress test already running on ${!os.hostname()}`);
+                      res.send(`Stress test already running on $${os.hostname()}`);
                     }
                   } else if (action === 'stop') {
                     if (stressInterval) {
                       clearInterval(stressInterval);
                       stressInterval = null;
-                      res.send(`Stress test stopped on ${!os.hostname()}`);
+                      res.send(`Stress test stopped on $${os.hostname()}`);
                     } else {
-                      res.send(`No stress test running on ${!os.hostname()}`);
+                      res.send(`No stress test running on $${os.hostname()}`);
                     }
                   } else {
                     res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
@@ -400,12 +400,12 @@ Resources:
                 });
 
                 async function fetchMetadata(key) {
-                  const response = await fetch(`http://169.254.169.254/latest/meta-data/${!key}`);
+                  const response = await fetch(`http://169.254.169.254/latest/meta-data/$${key}`);
                   return response.text();
                 }
 
                 app.listen(port, () => {
-                  console.log(`Server running on port ${port}`);
+                  console.log(`Server running on port $${port}`);
                 });
                 EOF
 
@@ -426,6 +426,7 @@ Resources:
                 curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
                 curl -s http://localhost/stress?action=test | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
             - { Env: !Ref EnvironmentName }
+
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
