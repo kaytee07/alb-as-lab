@@ -1,16 +1,26 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Auto Scaling Lab with Apache Web Server
+Description: 'Corrected: Auto Scaling Lab with a working Apache Web Server stress test.'
 
 Resources:
+  #----------------------------------------------------------------
+  # VPC and Networking
+  #----------------------------------------------------------------
   VPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AutoScaling-VPC
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: AutoScaling-IGW
 
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -25,6 +35,9 @@ Resources:
       CidrBlock: 10.0.0.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Public Subnet 1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -33,6 +46,9 @@ Resources:
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Public Subnet 2
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
@@ -40,6 +56,9 @@ Resources:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Private Subnet 1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -47,11 +66,17 @@ Resources:
       VpcId: !Ref VPC
       CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Private Subnet 2
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public Route Table
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -82,11 +107,17 @@ Resources:
     Properties:
       AllocationId: !GetAtt NatEIP.AllocationId
       SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: AutoScaling-NAT
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private Route Table
 
   PrivateRoute:
     Type: AWS::EC2::Route
@@ -107,34 +138,47 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
+  #----------------------------------------------------------------
+  # Security Groups
+  #----------------------------------------------------------------
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for ALB
+      GroupDescription: 'Allow HTTP traffic to the ALB'
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ALB-SG
 
   Ec2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for EC2 instances
+      GroupDescription: 'Allow HTTP from ALB and block all other traffic'
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          SourceSecurityGroupId: !Ref AlbSecurityGroup # Only allows traffic from the ALB
+      Tags:
+        - Key: Name
+          Value: EC2-SG
 
+  #----------------------------------------------------------------
+  # EC2 Launch Template with Corrected UserData
+  #----------------------------------------------------------------
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
+      LaunchTemplateName: AutoScalingLabLaunchTemplate
       LaunchTemplateData:
-        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}'
-        InstanceType: t3.micro
+        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        InstanceType: t2.micro
         SecurityGroupIds:
           - !Ref Ec2SecurityGroup
         UserData:
@@ -142,24 +186,33 @@ Resources:
             #!/bin/bash
             exec > /var/log/user-data.log 2>&1
             echo "Starting User Data script"
+            
+            # Install Apache, PHP, and the stress utility
             yum update -y
+            amazon-linux-extras install -y php7.4
+            yum install -y httpd stress
+            
+            # **FIX**: Grant the 'apache' user permission to run the stress command without a password.
+            # This is the secure way to allow a specific, non-privileged user to run a privileged command.
+            echo "apache ALL=(ALL) NOPASSWD: /usr/bin/stress" > /etc/sudoers.d/apache-stress
+            chmod 0440 /etc/sudoers.d/apache-stress
 
-            # Enable PHP 7.4 on Amazon Linux 2
-            amazon-linux-extras enable php7.4
-            yum install -y httpd php php-cli php-common stress
-
+            # Start and enable the Apache web server
             systemctl start httpd
             systemctl enable httpd
 
+            # Get instance metadata to display on the webpage
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 
-            # Homepage with Stress button
+            # Create the main homepage
             cat <<EOF > /var/www/html/index.php
             <!DOCTYPE html>
             <html>
+            <head><title>Auto Scaling Test</title></head>
             <body>
-            <h1>Hello from $IP / $INSTANCE_ID</h1>
+            <h1>Hello from Instance $INSTANCE_ID ($IP)</h1>
+            <p>Click the button below to generate CPU load on this instance. This will trigger a CloudWatch alarm and cause the Auto Scaling group to launch a new instance.</p>
             <form action="stress.php" method="get">
               <button type="submit">Stress CPU</button>
             </form>
@@ -167,65 +220,32 @@ Resources:
             </html>
             EOF
 
-            # PHP script to stress CPU
+            # **FIX**: Create the PHP script that now uses 'sudo' to execute the stress command.
+            # The stress parameters are adjusted for a t2.micro to ensure a clear CPU spike.
             cat <<EOF > /var/www/html/stress.php
             <?php
-            exec('stress --cpu 2 --timeout 300 > /dev/null 2>&1 &');
-            echo "Stressing CPU for 300 seconds...";
+            // Execute the stress command with sudo. The output is redirected to /dev/null
+            // to run it in the background and not wait for a response from the command.
+            exec('sudo /usr/bin/stress --cpu 1 --timeout 120 > /dev/null 2>&1 &');
+            echo "<h1>Stressing 1 CPU core for 120 seconds...</h1>";
+            echo "<p>The instance CPU will now rise above 50%, triggering the Auto Scaling alarm to scale out.</p>";
+            echo "<p><a href='index.php'>Go Back</a></p>";
             ?>
             EOF
 
+            # Set correct ownership and permissions for web files
             chown apache:apache /var/www/html/*
             chmod 644 /var/www/html/*
 
             echo "User Data script completed"
-      LaunchTemplateName: AutoScalingLabLaunchTemplate
 
-  AutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      VPCZoneIdentifier:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      LaunchTemplate:
-        LaunchTemplateId: !Ref LaunchTemplate
-        Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      MinSize: 1
-      MaxSize: 4
-      DesiredCapacity: 1
-      TargetGroupARNs:
-        - !Ref TargetGroup
-
-  ScaleOutPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AutoScalingGroupName: !Ref AutoScalingGroup
-      PolicyType: SimpleScaling
-      AdjustmentType: ChangeInCapacity
-      ScalingAdjustment: 1
-      Cooldown: 60
-
-  CPUAlarmHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 1
-      Statistic: Average
-      Threshold: 5
-      AlarmDescription: Alarm when CPU exceeds 30%
-      Period: 60
-      ComparisonOperator: GreaterThanThreshold
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      AlarmActions:
-        - !Ref ScaleOutPolicy
-      TreatMissingData: notBreaching
-
+  #----------------------------------------------------------------
+  # Application Load Balancer (ALB)
+  #----------------------------------------------------------------
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
+      Name: AutoScaling-ALB
       Scheme: internet-facing
       Subnets:
         - !Ref PublicSubnet1
@@ -237,6 +257,7 @@ Resources:
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
+      Name: AutoScaling-TG
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VPC
@@ -257,7 +278,89 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  #----------------------------------------------------------------
+  # Auto Scaling Group and Scaling Policies
+  #----------------------------------------------------------------
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 4
+      DesiredCapacity: 1
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      Tags:
+        - Key: Name
+          Value: AutoScaling-Instance
+          PropagateAtLaunch: true
+
+  ScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1 # Add one instance
+      Cooldown: 120
+
+  # A scale-in policy is a best practice to remove instances when load decreases.
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1 # Remove one instance
+      Cooldown: 120
+
+  CPUAlarmHigh: # Scale-out Alarm
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 'CPU-High-Scale-Out'
+      AlarmDescription: 'Alarm to scale out when CPU exceeds 50%'
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 50 # A more realistic threshold
+      Period: 60
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      AlarmActions:
+        - !Ref ScaleOutPolicy
+      TreatMissingData: notBreaching
+
+  CPUAlarmLow: # Scale-in Alarm
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 'CPU-Low-Scale-In'
+      AlarmDescription: 'Alarm to scale in when CPU is below 20%'
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 20
+      Period: 120
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      AlarmActions:
+        - !Ref ScaleInPolicy
+      TreatMissingData: notBreaching
+
+#----------------------------------------------------------------
+# Outputs
+#----------------------------------------------------------------
 Outputs:
   AlbDnsName:
-    Description: DNS name of the Application Load Balancer
+    Description: DNS name of the Application Load Balancer. Use this URL to access the web server.
     Value: !GetAtt ApplicationLoadBalancer.DNSName
