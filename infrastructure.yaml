@@ -261,8 +261,8 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub
-        - ${EnvName}-LaunchTemplate
-        - { EnvName: !Ref EnvironmentName }
+        - ${Env}-LaunchTemplate
+        - { Env: !Ref EnvironmentName }
       LaunchTemplateData:
         ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
         InstanceType: !Ref InstanceType
@@ -273,10 +273,10 @@ Resources:
           Fn::Base64: !Sub
             - |
                 #!/bin/bash -xe
-                # Redirect logs to /var/log/app.log for debugging
+                # Redirect logs to /var/log/app.log
                 exec > >(tee /var/log/app.log | logger -t user-data -s 2>/dev/null) 2>&1
 
-                # Install Node.js (LTS version)
+                # Install Node.js (LTS)
                 curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
                 yum install -y nodejs || { echo "Failed to install Node.js"; exit 1; }
 
@@ -287,7 +287,7 @@ Resources:
                 npm init -y || { echo "Failed to initialize npm project"; exit 1; }
                 npm install express @aws-sdk/client-ec2 || { echo "Failed to install npm packages"; exit 1; }
 
-                # Create the main application file (server.js)
+                # Create server.js
                 cat > /app/server.js << 'EOF'
                 const express = require('express');
                 const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
@@ -295,16 +295,11 @@ Resources:
                 const app = express();
                 const port = 80;
 
-                // AWS SDK client for fetching metadata
                 const ec2Client = new EC2Client({ region: process.env.AWS_REGION || 'us-east-1' });
-
-                // Serve static files (e.g., CSS, JS)
                 app.use(express.static('public'));
 
-                // Root endpoint to serve the HTML page
                 app.get('/', async (req, res) => {
                   try {
-                    // Fetch instance metadata
                     const instanceId = await fetchMetadata('instance-id');
                     const data = await ec2Client.send(new DescribeInstancesCommand({
                       InstanceIds: [instanceId]
@@ -313,9 +308,8 @@ Resources:
                     const ip = instance.PrivateIpAddress || 'Unknown IP';
                     const instanceIdDisplay = instance.InstanceId || 'Unknown Instance ID';
                     const az = instance.Placement.AvailabilityZone || 'Unknown AZ';
-                    const environmentName = "${EnvName}";
+                    const environmentName = "${Env}" || 'Unknown Environment';
 
-                    // HTML content with Tailwind CSS
                     res.send(`
                       <!DOCTYPE html>
                       <html lang="en">
@@ -329,7 +323,7 @@ Resources:
                         <div class="container mx-auto p-6 text-center">
                           <h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>
                           <div class="bg-blue-100 p-4 rounded-lg mb-4">
-                            <h3 class="text-lg font-semibold">Load Balancer URL available in CloudFormation Outputs</h3>
+                            <h3 class="text-lg font-semibold">Load Balancer URL in CloudFormation Outputs</h3>
                           </div>
                           <div class="bg-white p-6 rounded-lg shadow-md mb-4">
                             <h2 class="text-2xl font-semibold">Hello from ${ip} / ${instanceIdDisplay}</h2>
@@ -342,8 +336,8 @@ Resources:
                           </div>
                           <div class="text-gray-500 mt-4">
                             <p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>
-                            <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances.</p>
-                            <p>Refresh the page to see different instances serving requests.</p>
+                            <p>CPU utilization >50% triggers Auto Scaling.</p>
+                            <p>Refresh to see different instances.</p>
                           </div>
                         </div>
                         <script>
@@ -372,11 +366,10 @@ Resources:
                       </html>
                     `);
                   } catch (error) {
-                    res.status(500).send('Error fetching instance metadata: ' + error.message);
+                    res.status(500).send('Error fetching metadata: ' + error.message);
                   }
                 });
 
-                // Stress test endpoint
                 let stressInterval = null;
                 app.get('/stress', (req, res) => {
                   const action = req.query.action;
@@ -388,7 +381,7 @@ Resources:
                           Math.sqrt(Math.random() * Math.random());
                         }
                       }, 1000);
-                      setTimeout(() => clearInterval(stressInterval), 60000); // Stop after 60 seconds
+                      setTimeout(() => clearInterval(stressInterval), 60000);
                       res.send(`Stress test started on ${os.hostname()}`);
                     } else {
                       res.send(`Stress test already running on ${os.hostname()}`);
@@ -406,26 +399,24 @@ Resources:
                   }
                 });
 
-                // Helper function to fetch metadata
                 async function fetchMetadata(key) {
                   const response = await fetch(`http://169.254.169.254/latest/meta-data/${key}`);
                   return response.text();
                 }
 
-                // Start the server
                 app.listen(port, () => {
                   console.log(`Server running on port ${port}`);
                 });
                 EOF
 
-                # Create public directory for static assets
+                # Create public directory
                 mkdir -p /app/public
 
                 # Set permissions
                 chown -R ec2-user:ec2-user /app || { echo "Failed to set ownership"; exit 1; }
                 chmod -R 755 /app || { echo "Failed to set permissions"; exit 1; }
 
-                # Install PM2 to manage the Node.js process
+                # Install and start PM2
                 npm install -g pm2 || { echo "Failed to install PM2"; exit 1; }
                 pm2 start /app/server.js --name web-app || { echo "Failed to start application"; exit 1; }
                 pm2 startup systemd || { echo "Failed to set up PM2 startup"; exit 1; }
@@ -434,7 +425,7 @@ Resources:
                 # Test the application
                 curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
                 curl -s http://localhost/stress?action=test | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
-            - { EnvName: !Ref EnvironmentName }
+            - { Env: !Ref EnvironmentName }
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
