@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with a Node.js web server
-  in eu-west-1 that scales based on 50% CPU utilization, displaying instance IP and ID.
+  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Apache web servers
+  in eu-west-1 that scale based on 50% CPU utilization, displaying instance IP and ID.
 
 Parameters:
   KeyName:
@@ -207,13 +207,10 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
-        - !If
-          - HasKeyName
-          - IpProtocol: tcp
-            FromPort: 22
-            ToPort: 22
-            CidrIp: 0.0.0.0/0
-          - !Ref "AWS::NoValue"
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-Instance-SG
@@ -260,166 +257,184 @@ Resources:
           Value: !Sub ${EnvironmentName}-TG
 
   # Launch Template with dynamic AMI lookup
-  WebServerLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
-      LaunchTemplateData:
-        ImageId: !Sub "ami-0b9231f28b4937792"
-        InstanceType: !Ref InstanceType
-        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
-        SecurityGroupIds:
-          - !Ref InstanceSecurityGroup
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash -xe
-            # Redirect logs to /var/log/app.log for debugging
-            exec > >(tee /var/log/app.log | logger -t user-data -s 2>/dev/null) 2>&1
+WebServerLaunchTemplate:
+  Type: AWS::EC2::LaunchTemplate
+  Properties:
+    LaunchTemplateName: !Sub
+      - ${EnvName}-LaunchTemplate
+      - { EnvName: !Ref EnvironmentName }
+    LaunchTemplateData:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+              #!/bin/bash -xe
+              # Redirect logs to /var/log/app.log for debugging
+              exec > >(tee /var/log/app.log | logger -t user-data -s 2>/dev/null) 2>&1
 
-            # Install Node.js (LTS version)
-            curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-            yum install -y nodejs || { echo "Failed to install Node.js"; exit 1; }
+              # Install Node.js (LTS version)
+              curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+              yum install -y nodejs || { echo "Failed to install Node.js"; exit 1; }
 
-            # Create application directory
-            mkdir -p /app && cd /app
+              # Create application directory
+              mkdir -p /app && cd /app
 
-            # Initialize Node.js project
-            npm init -y || { echo "Failed to initialize npm project"; exit 1; }
-            npm install express aws-sdk/client-ec2 || { echo "Failed to install npm packages"; exit 1; }
+              # Initialize Node.js project
+              npm init -y || { echo "Failed to initialize npm project"; exit 1; }
+              npm install express @aws-sdk/client-ec2 || { echo "Failed to install npm packages"; exit 1; }
 
-            # Create the main application file (server.js)
-            cat > /app/server.js << 'EOF'
-            const express = require('express');
-            const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
-            const os = require('os');
-            const app = express();
-            const port = 80;
+              # Create the main application file (server.js)
+              cat > /app/server.js << 'EOF'
+              const express = require('express');
+              const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
+              const os = require('os');
+              const app = express();
+              const port = 80;
 
-            // AWS SDK client for fetching metadata
-            const ec2Client = new EC2Client({ region: 'eu-west-1' });
+              // AWS SDK client for fetching metadata
+              const ec2Client = new EC2Client({ region: process.env.AWS_REGION || 'us-east-1' });
 
-            // Root endpoint to serve the HTML page
-            app.get('/', async (req, res) => {
-              try {
-                const instanceId = os.hostname();
-                const data = await ec2Client.send(new DescribeInstancesCommand({
-                  InstanceIds: [instanceId]
-                }));
-                const instance = data.Reservations[0].Instances[0];
-                const ip = instance.PrivateIpAddress || 'Unknown IP';
-                const az = instance.Placement.AvailabilityZone || 'Unknown AZ';
+              // Serve static files (e.g., CSS, JS)
+              app.use(express.static('public'));
 
-                // HTML content with Tailwind CSS
-                res.send(`
-                  <!DOCTYPE html>
-                  <html lang="en">
-                  <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Auto Scaling Lab</title>
-                    <script src="https://cdn.tailwindcss.com"></script>
-                  </head>
-                  <body class="bg-gray-100 font-sans">
-                    <div class="container mx-auto p-6 text-center">
-                      <h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>
-                      <div class="bg-blue-100 p-4 rounded-lg mb-4">
-                        <h3 class="text-lg font-semibold">Load Balancer URL available in CloudFormation Outputs</h3>
+              // Root endpoint to serve the HTML page
+              app.get('/', async (req, res) => {
+                try {
+                  // Fetch instance metadata
+                  const instanceId = await fetchMetadata('instance-id');
+                  const data = await ec2Client.send(new DescribeInstancesCommand({
+                    InstanceIds: [instanceId]
+                  }));
+                  const instance = data.Reservations[0].Instances[0];
+                  const ip = instance.PrivateIpAddress || 'Unknown IP';
+                  const instanceIdDisplay = instance.InstanceId || 'Unknown Instance ID';
+                  const az = instance.Placement.AvailabilityZone || 'Unknown AZ';
+                  const environmentName = "${EnvName}";
+
+                  // HTML content with Tailwind CSS
+                  res.send(`
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                      <meta charset="UTF-8">
+                      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                      <title>Auto Scaling Lab</title>
+                      <script src="https://cdn.tailwindcss.com"></script>
+                    </head>
+                    <body class="bg-gray-100 font-sans">
+                      <div class="container mx-auto p-6 text-center">
+                        <h1 class="text-3xl font-bold mb-4">Auto Scaling Lab</h1>
+                        <div class="bg-blue-100 p-4 rounded-lg mb-4">
+                          <h3 class="text-lg font-semibold">Load Balancer URL available in CloudFormation Outputs</h3>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-md mb-4">
+                          <h2 class="text-2xl font-semibold">Hello from ${ip} / ${instanceIdDisplay}</h2>
+                          <p class="text-gray-600"><strong>Availability Zone:</strong> ${az}</p>
+                          <p class="text-gray-600"><strong>Environment:</strong> ${environmentName}</p>
+                        </div>
+                        <div class="flex justify-center gap-4">
+                          <button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>
+                          <button onclick="stopStressTest()" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg">Stop Stress Test</button>
+                        </div>
+                        <div class="text-gray-500 mt-4">
+                          <p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>
+                          <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances.</p>
+                          <p>Refresh the page to see different instances serving requests.</p>
+                        </div>
                       </div>
-                      <div class="bg-white p-6 rounded-lg shadow-md mb-4">
-                        <h2 class="text-2xl font-semibold">Hello from ${ip} / ${instanceId}</h2>
-                        <p class="text-gray-600"><strong>Availability Zone:</strong> ${az}</p>
-                      </div>
-                      <div class="flex justify-center gap-4">
-                        <button onclick="startStressTest()" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg">Stress Test CPU</button>
-                        <button onclick="stopStressTest()" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg">Stop Stress Test</button>
-                      </div>
-                      <div class="text-gray-500 mt-4">
-                        <p>Click "Stress Test CPU" to simulate high CPU load (80% for 60 seconds).</p>
-                        <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances.</p>
-                        <p>Refresh the page to see different instances serving requests.</p>
-                      </div>
-                    </div>
-                    <script>
-                      async function startStressTest() {
-                        try {
-                          const response = await fetch('/stress?action=start');
-                          if (!response.ok) throw new Error('HTTP error ' + response.status);
-                          const data = await response.text();
-                          alert('Stress test started: ' + data);
-                        } catch (error) {
-                          alert('Error starting stress test: ' + error.message);
+                      <script>
+                        async function startStressTest() {
+                          try {
+                            const response = await fetch('/stress?action=start');
+                            if (!response.ok) throw new Error('HTTP error ' + response.status);
+                            const data = await response.text();
+                            alert('Stress test started: ' + data);
+                          } catch (error) {
+                            alert('Error starting stress test: ' + error.message);
+                          }
                         }
-                      }
-                      async function stopStressTest() {
-                        try {
-                          const response = await fetch('/stress?action=stop');
-                          if (!response.ok) throw new Error('HTTP error ' + response.status);
-                          const data = await response.text();
-                          alert('Stress test stopped: ' + data);
-                        } catch (error) {
-                          alert('Error stopping stress test: ' + error.message);
+                        async function stopStressTest() {
+                          try {
+                            const response = await fetch('/stress?action=stop');
+                            if (!response.ok) throw new Error('HTTP error ' + response.status);
+                            const data = await response.text();
+                            alert('Stress test stopped: ' + data);
+                          } catch (error) {
+                            alert('Error stopping stress test: ' + error.message);
+                          }
                         }
+                      </script>
+                    </body>
+                    </html>
+                  `);
+                } catch (error) {
+                  res.status(500).send('Error fetching instance metadata: ' + error.message);
+                }
+              });
+
+              // Stress test endpoint
+              let stressInterval = null;
+              app.get('/stress', (req, res) => {
+                const action = req.query.action;
+                if (action === 'start') {
+                  if (!stressInterval) {
+                    stressInterval = setInterval(() => {
+                      let start = Date.now();
+                      while (Date.now() - start < 1000) {
+                        Math.sqrt(Math.random() * Math.random());
                       }
-                    </script>
-                  </body>
-                  </html>
-                `);
-              } catch (error) {
-                res.status(500).send('Error fetching instance metadata: ' + error.message);
-              }
-            });
-
-            // Stress test endpoint
-            let stressInterval = null;
-            app.get('/stress', (req, res) => {
-              const action = req.query.action;
-              if (action === 'start') {
-                if (!stressInterval) {
-                  // Simulate CPU load by running a tight loop
-                  stressInterval = setInterval(() => {
-                    let start = Date.now();
-                    while (Date.now() - start < 1000) {
-                      // Burn CPU cycles for ~1 second per iteration
-                      Math.sqrt(Math.random() * Math.random());
-                    }
-                  }, 1000);
-                  setTimeout(() => clearInterval(stressInterval), 60000); // Stop after 60 seconds
-                  res.send(`Stress test started on ${os.hostname()}`);
+                    }, 1000);
+                    setTimeout(() => clearInterval(stressInterval), 60000); // Stop after 60 seconds
+                    res.send(`Stress test started on ${os.hostname()}`);
+                  } else {
+                    res.send(`Stress test already running on ${os.hostname()}`);
+                  }
+                } else if (action === 'stop') {
+                  if (stressInterval) {
+                    clearInterval(stressInterval);
+                    stressInterval = null;
+                    res.send(`Stress test stopped on ${os.hostname()}`);
+                  } else {
+                    res.send(`No stress test running on ${os.hostname()}`);
+                  }
                 } else {
-                  res.send(`Stress test already running on ${os.hostname()}`);
+                  res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
                 }
-              } else if (action === 'stop') {
-                if (stressInterval) {
-                  clearInterval(stressInterval);
-                  stressInterval = null;
-                  res.send(`Stress test stopped on ${os.hostname()}`);
-                } else {
-                  res.send(`No stress test running on ${os.hostname()}`);
-                }
-              } else {
-                res.status(400).send('Invalid action. Use ?action=start or ?action=stop');
+              });
+
+              // Helper function to fetch metadata
+              async function fetchMetadata(key) {
+                const response = await fetch(`http://169.254.169.254/latest/meta-data/${key}`);
+                return response.text();
               }
-            });
 
-            // Start the server
-            app.listen(port, () => {
-              console.log(`Server running on port ${port}`);
-            });
-            EOF
+              // Start the server
+              app.listen(port, () => {
+                console.log(`Server running on port ${port}`);
+              });
+              EOF
 
-            # Set permissions
-            chown -R ec2-user:ec2-user /app || { echo "Failed to set ownership"; exit 1; }
-            chmod -R 755 /app || { echo "Failed to set permissions"; exit 1; }
+              # Create public directory for static assets
+              mkdir -p /app/public
 
-            # Install PM2 to manage the Node.js process
-            npm install -g pm2 || { echo "Failed to install PM2"; exit 1; }
-            pm2 start /app/server.js --name web-app || { echo "Failed to start application"; exit 1; }
-            pm2 startup systemd || { echo "Failed to set up PM2 startup"; exit 1; }
-            pm2 save || { echo "Failed to save PM2 process"; exit 1; }
+              # Set permissions
+              chown -R ec2-user:ec2-user /app || { echo "Failed to set ownership"; exit 1; }
+              chmod -R 755 /app || { echo "Failed to set permissions"; exit 1; }
 
-            # Test the application
-            curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
-            curl -s http://localhost/stress?action=test | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
+              # Install PM2 to manage the Node.js process
+              npm install -g pm2 || { echo "Failed to install PM2"; exit 1; }
+              pm2 start /app/server.js --name web-app || { echo "Failed to start application"; exit 1; }
+              pm2 startup systemd || { echo "Failed to set up PM2 startup"; exit 1; }
+              pm2 save || { echo "Failed to save PM2 process"; exit 1; }
+
+              # Test the application
+              curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
+              curl -s http://localhost/stress?action=test | grep -q "Invalid action" || { echo "Failed to test stress endpoint"; exit 1; }
+          - { EnvName: !Ref EnvironmentName }
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
