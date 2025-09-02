@@ -1,15 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Auto Scaling Lab with Apache Web Server
-Parameters:
-  InstanceType:
-    Type: String
-    Default: t3.micro
-    AllowedValues:
-      - t2.micro
-      - t3.micro
-      - t3.small
-      - t3.medium
-    Description: EC2 instance type for the Auto Scaling group
 
 Resources:
   VPC:
@@ -166,8 +156,8 @@ Resources:
             EOF
             cat <<EOF > /var/www/html/stress.php
             <?php
-            exec('stress --cpu 1 --timeout 60 > /dev/null 2>&1 &');
-            echo "Stressing CPU for 60 seconds";
+            exec('stress --cpu 2 --timeout 300 > /dev/null 2>&1 &');
+            echo "Stressing CPU for 300 seconds";
             ?>
             EOF
 
@@ -198,10 +188,10 @@ Resources:
   CPUAlarmHigh:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      EvaluationPeriods: 1
+      EvaluationPeriods: 2
       Statistic: Average
-      Threshold: 1
-      AlarmDescription: Alarm when CPU exceeds 30%
+      Threshold: 50
+      AlarmDescription: Alarm when CPU exceeds 50%
       Period: 60
       ComparisonOperator: GreaterThanThreshold
       Namespace: AWS/EC2
