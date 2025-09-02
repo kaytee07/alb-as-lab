@@ -257,174 +257,146 @@ Resources:
           Value: !Sub ${EnvironmentName}-TG
 
   # Launch Template with dynamic AMI lookup
-  WebServerLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
-      LaunchTemplateData:
-        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
-        InstanceType: !Ref InstanceType
-        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
-        SecurityGroupIds:
-          - !Ref InstanceSecurityGroup
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash -xe
-            # Log output to /var/log/user-data.log
-            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/null) 2>&1
+WebServerLaunchTemplate:
+  Type: AWS::EC2::LaunchTemplate
+  Properties:
+    LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
+    LaunchTemplateData:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # Log output to /var/log/user-data.log for debugging
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/null) 2>&1
 
-            # Install packages
-            yum update -y || { echo "Failed to update packages"; exit 1; }
-            yum install -y httpd php stress || { echo "Failed to install httpd, php, or stress"; exit 1; }
-            systemctl enable httpd || { echo "Failed to enable httpd"; exit 1; }
-            systemctl start httpd || { echo "Failed to start httpd"; exit 1; }
+          # Install required packages
+          yum update -y || { echo "Failed to update packages"; exit 1; }
+          yum install -y httpd php stress || { echo "Failed to install httpd, php, or stress"; exit 1; }
 
-            # Install SELinux tools if needed
-            yum install -y policycoreutils-python-utils || { echo "Failed to install SELinux tools"; exit 1; }
+          # Enable and start Apache
+          systemctl enable httpd || { echo "Failed to enable httpd"; exit 1; }
+          systemctl start httpd || { echo "Failed to start httpd"; exit 1; }
 
-            # Create index.php with server-side metadata fetching
-            cat > /var/www/html/index.php << 'EOF'
-            <?php
-            $environmentName = "${EnvironmentName}";
-            $ip = file_get_contents('http://169.254.169.254/latest/meta-data/local-ipv4');
-            $instance_id = file_get_contents('http://169.254.169.254/latest/meta-data/instance-id');
-            $az = file_get_contents('http://169.254.169.254/latest/meta-data/placement/availability-zone');
-            ?>
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Auto Scaling Lab</title>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; }
-                    .container { max-width: 800px; margin: 0 auto; text-align: center; }
-                    .instance-info { background: #f4f4f4; padding: 20px; border-radius: 5px; margin: 20px 0; }
-                    .stress-btn { 
-                        background: #ff4757; 
-                        color: white; 
-                        padding: 15px 30px; 
-                        border: none; 
-                        border-radius: 5px; 
-                        cursor: pointer; 
-                        font-size: 16px; 
-                        margin: 10px; 
-                    }
-                    .stress-btn:hover { background: #ff6b81; }
-                    .info { color: #666; font-size: 14px; margin-top: 20px; }
-                    .load-balancer { background: #dfe4ea; padding: 15px; border-radius: 5px; margin: 10px 0; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Auto Scaling Lab</h1>
-                    
-                    <div class="load-balancer">
-                        <h3>Load Balancer URL available in CloudFormation Outputs</h3>
-                    </div>
-                    
-                    <div class="instance-info">
-                        <h2>Hello from <?php echo htmlspecialchars($environmentName); ?></h2>
-                        <p><strong>IP Address / Instance ID:</strong> <?php echo $ip . ' / ' . $instance_id; ?></p>
-                        <p><strong>Availability Zone:</strong> <?php echo $az; ?></p>
-                    </div>
-                    
-                    <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
-                    <button class="stress-btn" onclick="stopStressTest()" style="background: #2ed573;">Stop Stress Test</button>
-                    
-                    <div class="info">
-                        <p>Clicking "Stress Test CPU" will simulate high CPU load (80% for 60 seconds)</p>
-                        <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances</p>
-                        <p>Refresh the page to see different instances serving requests</p>
-                    </div>
-                </div>
+          # Create index.php with server-side metadata fetching
+          cat > /var/www/html/index.php << 'EOF'
+          <?php
+          // Fetch instance metadata
+          $ip = @file_get_contents('http://169.254.169.254/latest/meta-data/local-ipv4') ?: 'Unknown IP';
+          $instance_id = @file_get_contents('http://169.254.169.254/latest/meta-data/instance-id') ?: 'Unknown Instance ID';
+          $az = @file_get_contents('http://169.254.169.254/latest/meta-data/placement/availability-zone') ?: 'Unknown AZ';
+          $environment_name = "${EnvironmentName}";
+          ?>
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Auto Scaling Lab</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  .container { max-width: 800px; margin: 0 auto; text-align: center; }
+                  .instance-info { background: #f4f4f4; padding: 20px; border-radius: 5px; margin: 20px 0; }
+                  .stress-btn { 
+                      background: #ff4757; 
+                      color: white; 
+                      padding: 15px 30px; 
+                      border: none; 
+                      border-radius: 5px; 
+                      cursor: pointer; 
+                      font-size: 16px; 
+                      margin: 10px; 
+                  }
+                  .stress-btn:hover { background: #ff6b81; }
+                  .stop-btn { background: #2ed573; }
+                  .stop-btn:hover { background: #38e07d; }
+                  .info { color: #666; font-size: 14px; margin-top: 20px; }
+                  .load-balancer { background: #dfe4ea; padding: 15px; border-radius: 5px; margin: 10px 0; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Auto Scaling Lab</h1>
+                  <div class="load-balancer">
+                      <h3>Load Balancer URL available in CloudFormation Outputs</h3>
+                  </div>
+                  <div class="instance-info">
+                      <h2>Hello from <?php echo htmlspecialchars($ip . ' / ' . $instance_id); ?></h2>
+                      <p><strong>Availability Zone:</strong> <?php echo htmlspecialchars($az); ?></p>
+                  </div>
+                  <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
+                  <button class="stress-btn stop-btn" onclick="stopStressTest()">Stop Stress Test</button>
+                  <div class="info">
+                      <p>Clicking "Stress Test CPU" will simulate high CPU load (80% for 60 seconds)</p>
+                      <p>When CPU utilization exceeds 50%, Auto Scaling will launch new instances</p>
+                      <p>Refresh the page to see different instances serving requests</p>
+                  </div>
+              </div>
+              <script>
+                  function startStressTest() {
+                      fetch('/stress.php?action=start')
+                          .then(response => {
+                              if (!response.ok) throw new Error('HTTP error ' + response.status);
+                              return response.text();
+                          })
+                          .then(data => alert('Stress test started: ' + data))
+                          .catch(error => alert('Error starting stress test: ' + error.message));
+                  }
+                  function stopStressTest() {
+                      fetch('/stress.php?action=stop')
+                          .then(response => {
+                              if (!response.ok) throw new Error('HTTP error ' + response.status);
+                              return response.text();
+                          })
+                          .then(data => alert('Stress test stopped: ' + data))
+                          .catch(error => alert('Error stopping stress test: ' + error.message));
+                  }
+              </script>
+          </body>
+          </html>
+          EOF
 
-                <script>
-                    function startStressTest() {
-                        fetch('/cgi-bin/stress?action=start')
-                            .then(response => response.text())
-                            .then(data => alert('Stress test started: ' + data))
-                            .catch(error => alert('Error starting stress test: ' + error.message));
-                    }
+          # Create stress.php for handling stress test actions
+          cat > /var/www/html/stress.php << 'EOF'
+          <?php
+          header('Content-Type: text/plain');
+          $action = isset($_GET['action']) ? $_GET['action'] : '';
 
-                    function stopStressTest() {
-                        fetch('/cgi-bin/stress?action=stop')
-                            .then(response => response.text())
-                            .then(data => alert('Stress test stopped: ' + data))
-                            .catch(error => alert('Error stopping stress test: ' + error.message));
-                    }
-                </script>
-            </body>
-            </html>
-            EOF
+          if ($action === 'start') {
+              // Start stress test (80% CPU load for 60 seconds)
+              $output = shell_exec('nohup stress --cpu 2 --timeout 60 > /dev/null 2>&1 &');
+              echo "Stress test started on " . gethostname();
+          } elseif ($action === 'stop') {
+              // Stop all stress processes
+              $output = shell_exec('pkill -f stress || true');
+              echo "Stress test stopped on " . gethostname();
+          } else {
+              http_response_code(400);
+              echo "Invalid action. Use ?action=start or ?action=stop";
+          }
+          ?>
+          EOF
 
-            # Create CGI directory and script
-            mkdir -p /var/www/cgi-bin || { echo "Failed to create cgi-bin directory"; exit 1; }
-            cat > /var/www/cgi-bin/stress << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/plain"
-            echo ""
+          # Set permissions for web content
+          chown -R apache:apache /var/www/html || { echo "Failed to set ownership"; exit 1; }
+          find /var/www/html -type d -exec chmod 755 {} \; || { echo "Failed to set directory permissions"; exit 1; }
+          find /var/www/html -type f -exec chmod 644 {} \; || { echo "Failed to set file permissions"; exit 1; }
 
-            # Parse query string
-            QUERY_STRING="$QUERY_STRING"
-            ACTION=""
+          # Configure Apache for PHP
+          cat > /etc/httpd/conf.d/app.conf << 'EOF'
+          <FilesMatch \.php$>
+              SetHandler application/x-httpd-php
+          </FilesMatch>
+          DirectoryIndex index.php index.html
+          EOF
 
-            # Extract action parameter
-            if [[ "$QUERY_STRING" == *"action=start"* ]]; then
-                ACTION="start"
-            elif [[ "$QUERY_STRING" == *"action=stop"* ]]; then
-                ACTION="stop"
-            fi
+          # Restart Apache
+          systemctl restart httpd || { echo "Failed to restart httpd"; exit 1; }
 
-            case $ACTION in
-                "start")
-                    # Start stress test (80% CPU load for 60 seconds)
-                    nohup stress --cpu 2 --timeout 60 > /dev/null 2>&1 &
-                    echo "Stress test started on $(hostname)"
-                    ;;
-                "stop")
-                    # Stop all stress processes
-                    pkill -f stress || true
-                    echo "Stress test stopped on $(hostname)"
-                    ;;
-                *)
-                    echo "Invalid action. Use ?action=start or ?action=stop"
-                    ;;
-            esac
-            EOF
-
-            # Set executable permissions and SELinux context for CGI
-            chmod +x /var/www/cgi-bin/stress || { echo "Failed to set permissions on stress script"; exit 1; }
-            chcon -R -t httpd_sys_script_exec_t /var/www/cgi-bin || { echo "Failed to set SELinux context for CGI"; exit 1; }
-
-            # Configure Apache for PHP and CGI
-            cat > /etc/httpd/conf.d/app.conf << 'EOF'
-            # PHP configuration
-            <FilesMatch \.php$>
-                SetHandler application/x-httpd-php
-            </FilesMatch>
-
-            # CGI configuration
-            ScriptAlias /cgi-bin/ /var/www/cgi-bin/
-            <Directory "/var/www/cgi-bin">
-                Options +ExecCGI
-                AddHandler cgi-script .cgi .sh
-                Require all granted
-            </Directory>
-
-            # Set index.php as default
-            DirectoryIndex index.php index.html
-            EOF
-
-            # Set permissions for web content
-            chown -R apache:apache /var/www/html /var/www/cgi-bin || { echo "Failed to set ownership"; exit 1; }
-            find /var/www/html /var/www/cgi-bin -type d -exec chmod 755 {} \; || { echo "Failed to set directory permissions"; exit 1; }
-            find /var/www/html /var/www/cgi-bin -type f -exec chmod 644 {} \; || { echo "Failed to set file permissions"; exit 1; }
-
-            # Restart Apache
-            systemctl restart httpd || { echo "Failed to restart httpd"; exit 1; }
-
-            # Test the application and CGI
-            curl -s http://localhost/ | head -5 || { echo "Failed to test application"; exit 1; }
-            curl -s http://localhost/cgi-bin/stress?action=test || { echo "Failed to test CGI script"; exit 1; }
+          # Test the application
+          curl -s http://localhost/ | grep -q "Hello from" || { echo "Failed to test application"; exit 1; }
+          curl -s http://localhost/stress.php?action=test | grep -q "Invalid action" || { echo "Failed to test stress.php"; exit 1; }
 
   # Auto Scaling Group
   WebServerAutoScalingGroup:
