@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Node.js web servers
+  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Apache web servers
   in eu-west-1 that scale based on 50% CPU utilization, displaying instance IP and ID.
 
 Parameters:
@@ -16,9 +16,7 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: AutoScalingLab
-    AllowedPattern: ^[a-zA-Z0-9_.]{1,50}$
-    ConstraintDescription: Must be 1-50 alphanumeric characters, underscores, or periods (no hyphens or special characters).
-    Description: Environment name for tagging (e.g., AutoScalingLab, Prod, Dev)
+    Description: Environment name for tagging
 
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
@@ -59,9 +57,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PublicSubnet1
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PublicSubnet1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -72,9 +68,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PublicSubnet2
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PublicSubnet2
 
   # Private Subnets
   PrivateSubnet1:
@@ -85,9 +79,7 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PrivateSubnet1
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PrivateSubnet1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -97,9 +89,7 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PrivateSubnet2
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PrivateSubnet2
 
   # NAT Gateway in Public Subnet 1
   EIP1:
@@ -108,9 +98,7 @@ Resources:
       Domain: vpc
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-NAT-EIP1
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-NAT-EIP1
 
   NATGateway1:
     Type: AWS::EC2::NatGateway
@@ -119,9 +107,7 @@ Resources:
       SubnetId: !Ref PublicSubnet1
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-NATGateway1
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-NATGateway1
 
   # Route Tables
   PublicRouteTable:
@@ -130,9 +116,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PublicRT
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PublicRT
 
   PrivateRouteTable1:
     Type: AWS::EC2::RouteTable
@@ -140,9 +124,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PrivateRT1
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PrivateRT1
 
   PrivateRouteTable2:
     Type: AWS::EC2::RouteTable
@@ -150,9 +132,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-PrivateRT2
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-PrivateRT2
 
   # Routes
   PublicRoute:
@@ -215,9 +195,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-ALB-SG
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-ALB-SG
 
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -235,49 +213,13 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-Instance-SG
-            - { Env: !Ref EnvironmentName }
-
-  # IAM Role for EC2 Instances
-  EC2InstanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: EC2DescribeInstances
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ec2:DescribeInstances
-                Resource: '*'
-      Tags:
-        - Key: Name
-          Value: !Sub
-            - ${Env}-EC2Role
-            - { Env: !Ref EnvironmentName }
-
-  EC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref EC2InstanceRole
+          Value: !Sub ${EnvironmentName}-Instance-SG
 
   # Application Load Balancer
   WebAppLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub
-        - ${Env}-ALB
-        - { Env: !Ref EnvironmentName }
+      Name: !Sub ${EnvironmentName}-ALB
       Scheme: internet-facing
       Subnets:
         - !Ref PublicSubnet1
@@ -286,9 +228,7 @@ Resources:
         - !Ref ALBSecurityGroup
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-ALB
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-ALB
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -303,9 +243,7 @@ Resources:
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub
-        - ${Env}-TG
-        - { Env: !Ref EnvironmentName }
+      Name: !Sub ${EnvironmentName}-TG
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VPC
@@ -316,9 +254,7 @@ Resources:
       UnhealthyThresholdCount: 2
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-TG
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-TG
 
   # Launch Template with dynamic AMI lookup
   WebServerLaunchTemplate:
@@ -333,145 +269,144 @@ Resources:
         KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
-        IamInstanceProfile:
-          Arn: !GetAtt EC2InstanceProfile.Arn
-        UserData:
-                  Fn::Base64: !Sub |
-                    #!/bin/bash
-                    # Update the system
-                    yum update -y
-                    
-                    # Install Apache and stress
-                    yum install -y httpd stress
-                    
-                    # Start and enable Apache
-                    systemctl start httpd
-                    systemctl enable httpd
-                    
-                    # Create a simple web page with instance info and stress test button
-                    INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-                    PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-                    
-                    cat > /var/www/html/index.html << EOF
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Auto Scaling Lab</title>
-                        <style>
-                            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-                            h1 { color: #333; }
-                            .info { background-color: #f5f5f5; padding: 20px; border-radius: 5px; display: inline-block; }
-                            .stress-btn { 
-                                background-color: #ff4757; 
-                                color: white; 
-                                border: none; 
-                                padding: 15px 32px; 
-                                text-align: center; 
-                                text-decoration: none; 
-                                display: inline-block; 
-                                font-size: 16px; 
-                                margin: 20px 2px; 
-                                cursor: pointer; 
-                                border-radius: 5px;
-                            }
-                            .stress-btn:hover { background-color: #ff6b81; }
-                        </style>
-                    </head>
-                    <body>
-                        <h1>Auto Scaling Lab</h1>
-                        <div class="info">
-                            <h2>Hello from $PRIVATE_IP / $INSTANCE_ID</h2>
-                            <p>This instance is part of an Auto Scaling Group</p>
-                            <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
-                            <p id="status"></p>
-                        </div>
-                        
-                        <script>
-                            function startStressTest() {
-                                document.getElementById('status').innerText = 'Starting CPU stress test for 60 seconds...';
-                                
-                                // Use fetch API to trigger stress test
-                                fetch('/stress', { method: 'POST' })
-                                    .then(response => response.text())
-                                    .then(data => {
-                                        document.getElementById('status').innerText = 'Stress test completed!';
-                                    })
-                                    .catch(error => {
-                                        document.getElementById('status').innerText = 'Error starting stress test: ' + error;
-                                    });
-                            }
-                        </script>
-                    </body>
-                    </html>
-                    EOF
-                    
-                    # Create a simple stress test script that definitely works
-                    cat > /var/www/html/stress.php << 'EOF'
-                    <?php
-                    header('Content-Type: text/plain');
-                    echo "Starting CPU stress test...\n";
-                    flush();
-                    
-                    // Fork a background process to do CPU intensive work
-                    $pid = pcntl_fork();
-                    if ($pid == 0) {
-                        // Child process - do CPU intensive work
-                        $end_time = time() + 60; // Run for 60 seconds
-                        while (time() < $end_time) {
-                            // CPU intensive operations
-                            for ($i = 0; $i < 1000000; $i++) {
-                                sqrt($i);
-                            }
-                        }
-                        exit(0);
-                    }
-                    echo "CPU stress test started (PID: $pid)\n";
-                    ?>
-                    EOF
-                    
-                    # Install PHP
-                    yum install -y php
-                    
-                    # Create a CGI script to handle stress test
-                    mkdir -p /var/www/cgi-bin
-                    cat > /var/www/cgi-bin/stress.sh << 'EOF'
-                    #!/bin/bash
-                    echo "Content-type: text/plain"
-                    echo ""
-                    echo "Starting CPU stress test for 60 seconds..."
-                    
-                    # Create CPU load using dd and /dev/zero
-                    timeout 60 bash -c '
-                        for i in {1..4}; do
-                            dd if=/dev/zero of=/dev/null bs=1M &
-                        done
-                        wait
-                    ' &
-                    
-                    echo "CPU stress test initiated"
-                    EOF
-                    
-                    chmod +x /var/www/cgi-bin/stress.sh
-                    
-                    # Configure Apache to handle the stress test endpoint
-                    cat > /etc/httpd/conf.d/stress.conf << EOF
-                    ScriptAlias /stress /var/www/cgi-bin/stress.sh
-                    <Directory "/var/www/cgi-bin">
-                        AllowOverride None
-                        Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
-                        Require all granted
-                    </Directory>
-                    EOF
-                    
-                    # Restart Apache to apply changes
-                    systemctl restart httpd
+      UserData:
+                Fn::Base64: !Sub |
+                  #!/bin/bash
+                  # Update the system
+                  yum update -y
+                  
+                  # Install Apache and stress
+                  yum install -y httpd stress
+                  
+                  # Start and enable Apache
+                  systemctl start httpd
+                  systemctl enable httpd
+                  
+                  # Create a simple web page with instance info and stress test button
+                  INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                  PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+                  
+                  cat > /var/www/html/index.html << EOF
+                  <!DOCTYPE html>
+                  <html>
+                  <head>
+                      <title>Auto Scaling Lab</title>
+                      <style>
+                          body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+                          h1 { color: #333; }
+                          .info { background-color: #f5f5f5; padding: 20px; border-radius: 5px; display: inline-block; }
+                          .stress-btn { 
+                              background-color: #ff4757; 
+                              color: white; 
+                              border: none; 
+                              padding: 15px 32px; 
+                              text-align: center; 
+                              text-decoration: none; 
+                              display: inline-block; 
+                              font-size: 16px; 
+                              margin: 20px 2px; 
+                              cursor: pointer; 
+                              border-radius: 5px;
+                          }
+                          .stress-btn:hover { background-color: #ff6b81; }
+                      </style>
+                  </head>
+                  <body>
+                      <h1>Auto Scaling Lab</h1>
+                      <div class="info">
+                          <h2>Hello from $PRIVATE_IP / $INSTANCE_ID</h2>
+                          <p>This instance is part of an Auto Scaling Group</p>
+                          <button class="stress-btn" onclick="startStressTest()">Stress Test CPU</button>
+                          <p id="status"></p>
+                      </div>
+                      
+                      <script>
+                          function startStressTest() {
+                              document.getElementById('status').innerText = 'Starting CPU stress test for 60 seconds...';
+                              
+                              // Use fetch API to trigger stress test
+                              fetch('/stress', { method: 'POST' })
+                                  .then(response => response.text())
+                                  .then(data => {
+                                      document.getElementById('status').innerText = 'Stress test completed!';
+                                  })
+                                  .catch(error => {
+                                      document.getElementById('status').innerText = 'Error starting stress test: ' + error;
+                                  });
+                          }
+                      </script>
+                  </body>
+                  </html>
+                  EOF
+                  
+                  # Create a simple stress test script that definitely works
+                  cat > /var/www/html/stress.php << 'EOF'
+                  <?php
+                  header('Content-Type: text/plain');
+                  echo "Starting CPU stress test...\n";
+                  flush();
+                  
+                  // Fork a background process to do CPU intensive work
+                  $pid = pcntl_fork();
+                  if ($pid == 0) {
+                      // Child process - do CPU intensive work
+                      $end_time = time() + 60; // Run for 60 seconds
+                      while (time() < $end_time) {
+                          // CPU intensive operations
+                          for ($i = 0; $i < 1000000; $i++) {
+                              sqrt($i);
+                          }
+                      }
+                      exit(0);
+                  }
+                  echo "CPU stress test started (PID: $pid)\n";
+                  ?>
+                  EOF
+                  
+                  # Install PHP
+                  yum install -y php
+                  
+                  # Create a CGI script to handle stress test
+                  mkdir -p /var/www/cgi-bin
+                  cat > /var/www/cgi-bin/stress.sh << 'EOF'
+                  #!/bin/bash
+                  echo "Content-type: text/plain"
+                  echo ""
+                  echo "Starting CPU stress test for 60 seconds..."
+                  
+                  # Create CPU load using dd and /dev/zero
+                  timeout 60 bash -c '
+                      for i in {1..4}; do
+                          dd if=/dev/zero of=/dev/null bs=1M &
+                      done
+                      wait
+                  ' &
+                  
+                  echo "CPU stress test initiated"
+                  EOF
+                  
+                  chmod +x /var/www/cgi-bin/stress.sh
+                  
+                  # Configure Apache to handle the stress test endpoint
+                  cat > /etc/httpd/conf.d/stress.conf << EOF
+                  ScriptAlias /stress /var/www/cgi-bin/stress.sh
+                  <Directory "/var/www/cgi-bin">
+                      AllowOverride None
+                      Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
+                      Require all granted
+                  </Directory>
+                  EOF
+                  
+                  # Restart Apache to apply changes
+                  systemctl restart httpd
+
+
+
   # Auto Scaling Group
   WebServerAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub
-        - ${Env}-ASG
-        - { Env: !Ref EnvironmentName }
+      AutoScalingGroupName: !Sub ${EnvironmentName}-ASG
       LaunchTemplate:
         LaunchTemplateId: !Ref WebServerLaunchTemplate
         Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
@@ -487,9 +422,7 @@ Resources:
       HealthCheckGracePeriod: 300
       Tags:
         - Key: Name
-          Value: !Sub
-            - ${Env}-WebServer
-            - { Env: !Ref EnvironmentName }
+          Value: !Sub ${EnvironmentName}-WebServer
           PropagateAtLaunch: true
 
   # Scaling Policies
@@ -500,4 +433,97 @@ Resources:
       AutoScalingGroupName: !Ref WebServerAutoScalingGroup
       Cooldown: 60
       ScalingAdjustment: 1
-      Policy
+      PolicyType: SimpleScaling
+
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref WebServerAutoScalingGroup
+      Cooldown: 300
+      ScalingAdjustment: -1
+      PolicyType: SimpleScaling
+
+  # CloudWatch Alarms
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Alarm when CPU exceeds 50%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref WebServerAutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref ScaleUpPolicy
+
+  LowCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Alarm when CPU is below 10%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref WebServerAutoScalingGroup
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref ScaleDownPolicy
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${EnvironmentName}-VPCId
+
+  LoadBalancerDNS:
+    Description: DNS name of the Load Balancer
+    Value: !GetAtt WebAppLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-LoadBalancerDNS
+
+  AutoScalingGroupName:
+    Description: Name of the Auto Scaling Group
+    Value: !Ref WebServerAutoScalingGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-ASGName
+
+  PublicSubnet1Id:
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicSubnet1Id
+
+  PublicSubnet2Id:
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicSubnet2Id
+
+  PrivateSubnet1Id:
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub ${EnvironmentName}-PrivateSubnet1Id
+
+  PrivateSubnet2Id:
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub ${EnvironmentName}-PrivateSubnet2Id
+
+  LaunchTemplateName:
+    Description: Name of the Launch Template
+    Value: !Ref WebServerLaunchTemplate
+    Export:
+      Name: !Sub ${EnvironmentName}-LaunchTemplateName
