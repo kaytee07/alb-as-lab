@@ -244,7 +244,7 @@ Resources:
     Properties:
       EvaluationPeriods: 1
       Statistic: Average
-      Threshold: 50
+      Threshold: 5
       AlarmDescription: Alarm when CPU exceeds 50%
       Period: 60
       ComparisonOperator: GreaterThanThreshold
