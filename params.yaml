@@ -1,0 +1,4 @@
+template-file-path: infrastructure.yaml
+parameters:
+  InstanceType: t3.micro
+tags: {}
