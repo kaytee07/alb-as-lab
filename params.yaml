@@ -1,6 +1,0 @@
-template-file-path: infrastructure.yaml
-parameters:
-  KeyName: Kaylee-lab2-keypair
-  EnvironmentName: AutoScalingLab
-  InstanceType: t3.micro
-tags: {}
