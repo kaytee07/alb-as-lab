@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with Apache web servers
-  in eu-west-1 that scale based on 50% CPU utilization, displaying instance IP and ID.
+  Auto Scaling Lab: Deploys a VPC, ALB, and Auto Scaling Group with a Node.js web server
+  in eu-west-1 that scales based on 50% CPU utilization, displaying instance IP and ID.
 
 Parameters:
   KeyName:
@@ -207,10 +207,13 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
+        - !If
+          - HasKeyName
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: 0.0.0.0/0
+          - !Ref "AWS::NoValue"
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-Instance-SG
@@ -262,7 +265,7 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
       LaunchTemplateData:
-        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+        ImageId: !Sub "ami-0b9231f28b4937792"
         InstanceType: !Ref InstanceType
         KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
         SecurityGroupIds:
@@ -282,7 +285,7 @@ Resources:
 
             # Initialize Node.js project
             npm init -y || { echo "Failed to initialize npm project"; exit 1; }
-            npm install express aws-sdk-client-v3 || { echo "Failed to install npm packages"; exit 1; }
+            npm install express aws-sdk/client-ec2 || { echo "Failed to install npm packages"; exit 1; }
 
             # Create the main application file (server.js)
             cat > /app/server.js << 'EOF'
@@ -293,21 +296,17 @@ Resources:
             const port = 80;
 
             // AWS SDK client for fetching metadata
-            const ec2Client = new EC2Client({ region: process.env.AWS_REGION || 'us-east-1' });
-
-            // Serve static files (e.g., CSS, JS)
-            app.use(express.static('public'));
+            const ec2Client = new EC2Client({ region: 'eu-west-1' });
 
             // Root endpoint to serve the HTML page
             app.get('/', async (req, res) => {
               try {
-                // Fetch instance metadata
+                const instanceId = os.hostname();
                 const data = await ec2Client.send(new DescribeInstancesCommand({
-                  InstanceIds: [await fetchMetadata('instance-id')]
+                  InstanceIds: [instanceId]
                 }));
                 const instance = data.Reservations[0].Instances[0];
                 const ip = instance.PrivateIpAddress || 'Unknown IP';
-                const instanceId = instance.InstanceId || 'Unknown Instance ID';
                 const az = instance.Placement.AvailabilityZone || 'Unknown AZ';
 
                 // HTML content with Tailwind CSS
@@ -402,20 +401,11 @@ Resources:
               }
             });
 
-            // Helper function to fetch metadata
-            async function fetchMetadata(key) {
-              const response = await fetch(`http://169.254.169.254/latest/meta-data/${key}`);
-              return response.text();
-            }
-
             // Start the server
             app.listen(port, () => {
               console.log(`Server running on port ${port}`);
             });
             EOF
-
-            # Create public directory for static assets
-            mkdir -p /app/public
 
             # Set permissions
             chown -R ec2-user:ec2-user /app || { echo "Failed to set ownership"; exit 1; }
