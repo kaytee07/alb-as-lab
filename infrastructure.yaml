@@ -1,44 +1,24 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: |
-  Enhanced Auto Scaling Lab with Apache Web Server
-  Features:
-  - VPC with public and private subnets across two AZs
-  - NAT Gateway for outbound internet access from private instances
-  - Application Load Balancer with proper health checks
-  - Auto Scaling Group with scaling policies
-  - Enhanced security with minimal required permissions
-  - Detailed monitoring and logging
-  - User-friendly web interface with instance metadata
+Description: >
+  Auto Scaling Lab: Deploys a VPC, public/private subnets, NAT Gateway, ALB, and an Auto Scaling Group
+  with a CPU-based scaling policy. EC2 instances run a web server that displays instance info and has
+  a stress test button.
 
 Parameters:
-  EnvironmentName:
-    Type: String
-    Default: AutoScalingLab
-    Description: Environment name used for resource naming
   InstanceType:
+    Description: EC2 instance type for the web servers.
     Type: String
-    Default: t3.micro
-    AllowedValues: [t3.micro, t3.small, t3.medium]
-    Description: EC2 instance type
-  MinInstances:
-    Type: Number
-    Default: 2
-    Description: Minimum number of instances in Auto Scaling Group
-  MaxInstances:
-    Type: Number
-    Default: 6
-    Description: Maximum number of instances in Auto Scaling Group
-  ScaleUpThreshold:
-    Type: Number
-    Default: 70
-    Description: CPU utilization percentage to trigger scale-out
-  ScaleDownThreshold:
-    Type: Number
-    Default: 30
-    Description: CPU utilization percentage to trigger scale-in
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+    ConstraintDescription: Must be a valid EC2 instance type.
 
 Resources:
-  # VPC and Networking
+  #------------------------------------------------------------------
+  #  VPC and Networking
+  #------------------------------------------------------------------
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -47,14 +27,14 @@ Resources:
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-VPC
+          Value: !Sub ${AWS::StackName}-VPC
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-IGW
+          Value: !Sub ${AWS::StackName}-IGW
 
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -62,58 +42,71 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  # Public Subnets for ALB and NAT Gateway
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.0.0/24
+      CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PublicSubnet-1
+          Value: !Sub ${AWS::StackName}-PublicSubnet-1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
+      CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PublicSubnet-2
+          Value: !Sub ${AWS::StackName}-PublicSubnet-2
 
-  # Private Subnets for EC2 Instances
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
+      CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateSubnet-1
+          Value: !Sub ${AWS::StackName}-PrivateSubnet-1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
+      CidrBlock: 10.0.4.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-PrivateSubnet-2
+          Value: !Sub ${AWS::StackName}-PrivateSubnet-2
 
-  # Route Tables
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NAT-Gateway
+
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-Public-RT
+          Value: !Sub ${AWS::StackName}-Public-RT
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -134,31 +127,13 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  # NAT Gateway for private subnet internet access
-  NatEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-NAT-EIP
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-NAT
-
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-Private-RT
+          Value: !Sub ${AWS::StackName}-Private-RT
 
   PrivateRoute:
     Type: AWS::EC2::Route
@@ -179,441 +154,63 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-  # Security Groups
-  AlbSecurityGroup:
+  #------------------------------------------------------------------
+  #  Security Groups
+  #------------------------------------------------------------------
+  ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for ALB
+      GroupName: !Sub ${AWS::StackName}-alb-sg
+      GroupDescription: "Enable HTTP access for the ALB"
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-ALB-SG
 
-  Ec2SecurityGroup:
+  EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for EC2 instances
+      GroupName: !Sub ${AWS::StackName}-ec2-sg
+      GroupDescription: "Enable HTTP access from the ALB only"
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !Ref AlbSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-EC2-SG
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
 
-  # IAM Role for EC2 instances
-  EC2Role:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
-      Path: /
-      Policies:
-        - PolicyName: EC2Permissions
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - cloudwatch:PutMetricData
-                  - ec2:DescribeTags
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - logs:DescribeLogStreams
-                Resource: '*'
-
-  EC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref EC2Role
-      Path: /
-
-  # Launch Template with User Data
-  LaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub ${EnvironmentName}-LaunchTemplate
-      LaunchTemplateData:
-        InstanceType: !Ref InstanceType
-        ImageId: !Ref LatestAmiId
-        SecurityGroupIds:
-          - !Ref Ec2SecurityGroup
-        IamInstanceProfile:
-          Name: !Ref EC2InstanceProfile
-        MetadataOptions:
-          HttpTokens: optional
-          HttpEndpoint: enabled
-          HttpPutResponseHopLimit: 2
-        TagSpecifications:
-          - ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: !Sub ${EnvironmentName}-WebServer
-          - ResourceType: volume
-            Tags:
-              - Key: Name
-                Value: !Sub ${EnvironmentName}-RootVolume
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -ex
-
-            # Update system and install packages
-            yum update -y
-            yum install -y httpd stress jq
-
-            # Enable and start Apache
-            systemctl enable httpd
-            systemctl start httpd
-
-            # Create web directory structure
-            mkdir -p /var/www/cgi-bin
-
-            # Get instance metadata
-            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            AVAILABILITY_ZONE=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-            LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-
-            # Create index.html with styling and functionality
-            cat > /var/www/html/index.html <<'HTML'
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Auto Scaling Lab</title>
-                <style>
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        margin: 0;
-                        padding: 20px;
-                        background-color: #f5f7f9;
-                        color: #333;
-                    }
-                    .container {
-                        max-width: 800px;
-                        margin: 0 auto;
-                        background: white;
-                        padding: 30px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                    }
-                    h1 {
-                        color: #2c5282;
-                        border-bottom: 2px solid #e2e8f0;
-                        padding-bottom: 10px;
-                    }
-                    .instance-info {
-                        background: #f8fafc;
-                        padding: 15px;
-                        border-radius: 6px;
-                        margin: 20px 0;
-                        border-left: 4px solid #4299e1;
-                    }
-                    .btn {
-                        background-color: #4299e1;
-                        color: white;
-                        border: none;
-                        padding: 12px 24px;
-                        border-radius: 6px;
-                        cursor: pointer;
-                        font-size: 16px;
-                        margin: 10px 5px;
-                        transition: background-color 0.3s;
-                    }
-                    .btn:hover {
-                        background-color: #2b6cb0;
-                    }
-                    .btn-danger {
-                        background-color: #e53e3e;
-                    }
-                    .btn-danger:hover {
-                        background-color: #c53030;
-                    }
-                    .status {
-                        padding: 8px 12px;
-                        border-radius: 4px;
-                        display: inline-block;
-                        margin: 5px 0;
-                    }
-                    .healthy {
-                        background-color: #c6f6d5;
-                        color: #2f855a;
-                    }
-                    .unhealthy {
-                        background-color: #fed7d7;
-                        color: #c53030;
-                    }
-                    .metrics {
-                        display: flex;
-                        justify-content: space-between;
-                        margin: 20px 0;
-                    }
-                    .metric-box {
-                        flex: 1;
-                        text-align: center;
-                        padding: 15px;
-                        background: #f7fafc;
-                        border-radius: 6px;
-                        margin: 0 5px;
-                    }
-                    footer {
-                        margin-top: 30px;
-                        text-align: center;
-                        color: #718096;
-                        font-size: 14px;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Auto Scaling Lab Dashboard</h1>
-                    
-                    <div class="instance-info">
-                        <h2 id="instance-header">Instance Information</h2>
-                        <p><strong>Instance ID:</strong> <span id="instance-id">Loading...</span></p>
-                        <p><strong>IP Address:</strong> <span id="instance-ip">Loading...</span></p>
-                        <p><strong>Availability Zone:</strong> <span id="instance-az">Loading...</span></p>
-                        <p><strong>Status:</strong> <span class="status healthy" id="instance-status">Healthy</span></p>
-                    </div>
-
-                    <div class="metrics">
-                        <div class="metric-box">
-                            <h3>CPU Utilization</h3>
-                            <div id="cpu-metric">Loading...</div>
-                        </div>
-                        <div class="metric-box">
-                            <h3>Memory Usage</h3>
-                            <div id="memory-metric">Loading...</div>
-                        </div>
-                    </div>
-
-                    <h2>Instance Actions</h2>
-                    <button class="btn" onclick="triggerAction('stress')">Simulate CPU Load (60s)</button>
-                    <button class="btn" onclick="triggerAction('info')">Refresh Instance Info</button>
-                    <button class="btn btn-danger" onclick="triggerAction('failhealth')">Simulate Health Check Failure</button>
-
-                    <div id="action-result" style="margin-top: 20px; padding: 10px; border-radius: 4px; display: none;"></div>
-
-                    <footer>
-                        <p>Auto Scaling Lab - Part of AWS Learning Series</p>
-                    </footer>
-                </div>
-
-                <script>
-                    // Fetch and display instance information
-                    function fetchInstanceInfo() {
-                        fetch('/cgi-bin/meta.sh')
-                            .then(response => response.text())
-                            .then(data => {
-                                const parts = data.split(' / ');
-                                if (parts.length >= 2) {
-                                    document.getElementById('instance-id').textContent = parts[1];
-                                    document.getElementById('instance-ip').textContent = parts[0];
-                                    document.getElementById('instance-az').textContent = '${AVAILABILITY_ZONE}';
-                                }
-                            })
-                            .catch(error => {
-                                console.error('Error fetching instance info:', error);
-                            });
-                    }
-
-                    // Trigger various actions
-                    function triggerAction(action) {
-                        const resultDiv = document.getElementById('action-result');
-                        resultDiv.style.display = 'block';
-                        
-                        let endpoint = '';
-                        switch(action) {
-                            case 'stress':
-                                endpoint = '/cgi-bin/stress.sh';
-                                break;
-                            case 'info':
-                                fetchInstanceInfo();
-                                resultDiv.innerHTML = '<div class="status healthy">Instance information refreshed</div>';
-                                return;
-                            case 'failhealth':
-                                endpoint = '/cgi-bin/failhealth.sh';
-                                break;
-                        }
-
-                        fetch(endpoint)
-                            .then(response => response.text())
-                            .then(data => {
-                                resultDiv.innerHTML = `<div class="status healthy">${data}</div>`;
-                            })
-                            .catch(error => {
-                                resultDiv.innerHTML = `<div class="status unhealthy">Error: ${error.message}</div>`;
-                            });
-                    }
-
-                    // Initialize page
-                    document.addEventListener('DOMContentLoaded', function() {
-                        fetchInstanceInfo();
-                        
-                        // Simulate metrics updates
-                        setInterval(() => {
-                            document.getElementById('cpu-metric').textContent = Math.floor(Math.random() * 100) + '%';
-                            document.getElementById('memory-metric').textContent = Math.floor(Math.random() * 100) + '%';
-                        }, 3000);
-                    });
-                </script>
-            </body>
-            </html>
-            HTML
-
-            # Create meta CGI script
-            cat > /var/www/cgi-bin/meta.sh <<'CGI'
-            #!/bin/bash
-            echo "Content-type: text/plain"
-            echo ""
-            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            echo "${LOCAL_IP} / ${INSTANCE_ID}"
-            CGI
-
-            # Create stress CGI script
-            cat > /var/www/cgi-bin/stress.sh <<'CGI'
-            #!/bin/bash
-            echo "Content-type: text/plain"
-            echo ""
-            # Start stress in background with proper timeout (60 seconds)
-            nohup timeout 60s stress --cpu 4 --timeout 70 >/tmp/stress.log 2>&1 &
-            echo "CPU stress triggered for 60 seconds"
-            CGI
-
-            # Create health check failure script (for testing)
-            cat > /var/www/cgi-bin/failhealth.sh <<'CGI'
-            #!/bin/bash
-            echo "Content-type: text/plain"
-            echo ""
-            # Simulate a health check failure by stopping Apache
-            systemctl stop httpd
-            echo "Apache stopped - health check will now fail"
-            CGI
-
-            # Set execute permissions on CGI scripts
-            chmod +x /var/www/cgi-bin/*.sh
-
-            # Configure Apache for CGI
-            cat >> /etc/httpd/conf/httpd.conf <<'APACHE_CONFIG'
-
-            # CGI configuration
-            <Directory "/var/www/cgi-bin">
-                Options +ExecCGI
-                AddHandler cgi-script .cgi .sh
-                Require all granted
-            </Directory>
-
-            # Enhanced logging
-            LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\" %D" combined_timing
-            CustomLog "logs/access_log" combined_timing
-            APACHE_CONFIG
-
-            # Create a health check endpoint
-            cat > /var/www/html/health.html <<'HEALTH'
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Health Check</title>
-            </head>
-            <body>
-                <h1>Healthy</h1>
-            </body>
-            </html>
-            HEALTH
-
-            # Restart Apache to apply changes
-            systemctl restart httpd
-
-            # Install CloudWatch agent and configure for enhanced monitoring
-            cat > /tmp/cw-agent-config.json <<'CW_CONFIG'
-            {
-                "metrics": {
-                    "metrics_collected": {
-                        "cpu": {
-                            "measurement": [
-                                "cpu_usage_idle",
-                                "cpu_usage_iowait",
-                                "cpu_usage_user",
-                                "cpu_usage_system"
-                            ],
-                            "metrics_collection_interval": 30,
-                            "totalcpu": false
-                        },
-                        "disk": {
-                            "measurement": [
-                                "used_percent"
-                            ],
-                            "metrics_collection_interval": 300
-                        },
-                        "mem": {
-                            "measurement": [
-                                "mem_used_percent"
-                            ],
-                            "metrics_collection_interval": 30
-                        }
-                    }
-                }
-            }
-            CW_CONFIG
-
-            # Start CloudWatch agent
-            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/tmp/cw-agent-config.json -s
-
-  # Target Group for ALB
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: !Sub ${EnvironmentName}-TG
-      Port: 80
-      Protocol: HTTP
-      VpcId: !Ref VPC
-      HealthCheckPath: /health.html
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 2
-      TargetType: instance
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-TargetGroup
-
-  # Application Load Balancer
+  #------------------------------------------------------------------
+  #  Application Load Balancer (ALB)
+  #------------------------------------------------------------------
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub ${EnvironmentName}-ALB
-      Scheme: internet-facing
+      Name: !Sub ${AWS::StackName}-alb
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
       SecurityGroups:
-        - !Ref AlbSecurityGroup
-      Type: application
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-ALB
+        - !Ref ALBSecurityGroup
+      Scheme: internet-facing
 
-  # ALB Listener
-  Listener:
+  MyALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-tg
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+
+  MyALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       LoadBalancerArn: !Ref ApplicationLoadBalancer
@@ -621,107 +218,138 @@ Resources:
       Protocol: HTTP
       DefaultActions:
         - Type: forward
-          TargetGroupArn: !Ref TargetGroup
+          TargetGroupArn: !Ref MyALBTargetGroup
 
-  # Auto Scaling Group
-  AutoScalingGroup:
+  #------------------------------------------------------------------
+  #  EC2 Launch Template and Auto Scaling Group
+  #------------------------------------------------------------------
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd stress
+            systemctl start httpd
+            systemctl enable httpd
+            
+            # Enable CGI module to run shell scripts
+            echo "ScriptAlias /cgi-bin/ /var/www/cgi-bin/" > /etc/httpd/conf.d/cgi.conf
+            mkdir -p /var/www/cgi-bin
+            
+            # Create the CGI script for the stress test
+            cat <<'EOF' > /var/www/cgi-bin/stress.sh
+            #!/bin/bash
+            echo "Content-Type: text/plain"
+            echo ""
+            echo "Starting CPU stress test for 120 seconds..."
+            stress --cpu 1 --timeout 120 &
+            EOF
+            chmod +x /var/www/cgi-bin/stress.sh
+            
+            # Fetch instance metadata
+            INSTANCE_ID=$(curl -s http://169.254.169.24/latest/meta-data/instance-id)
+            IP_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # Create the index.html file with dynamic content
+            cat <<EOF > /var/www/html/index.html
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Auto Scaling Test</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #232F3E; color: #FFFFFF; }
+                    .container { background-color: #1A2433; padding: 40px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+                    h1 { color: #FF9900; }
+                    button { padding: 15px 30px; font-size: 18px; cursor: pointer; background-color: #FF9900; color: #1A2433; border: none; border-radius: 5px; transition: background-color 0.3s; }
+                    button:hover { background-color: #FFAA33; }
+                    #status { margin-top: 20px; font-size: 16px; color: #CCCCCC; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Hello from Instance</h1>
+                    <p style="font-size: 20px;"><b>IP Address:</b> ${IP_ADDRESS}</p>
+                    <p style="font-size: 20px;"><b>Instance ID:</b> ${INSTANCE_ID}</p>
+                    <br/>
+                    <button onclick="runStress()">Stress CPU for 120 Seconds</button>
+                    <p id="status"></p>
+                </div>
+                <script>
+                    function runStress() {
+                        const statusEl = document.getElementById('status');
+                        statusEl.innerText = 'Stress test started! Monitor the Auto Scaling Group activity in the AWS Console.';
+                        fetch('/cgi-bin/stress.sh')
+                            .then(response => response.text())
+                            .then(data => {
+                                console.log(data);
+                                statusEl.innerText = 'Stress command sent. The instance CPU will be high for 2 minutes.';
+                            })
+                            .catch(error => {
+                                console.error('Error:', error);
+                                statusEl.innerText = 'Failed to start stress test.';
+                            });
+                    }
+                </script>
+            </body>
+            </html>
+            EOF
+            
+            systemctl restart httpd
+
+  MyAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub ${EnvironmentName}-ASG
       VPCZoneIdentifier:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
       LaunchTemplate:
-        LaunchTemplateId: !Ref LaunchTemplate
-        Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      MinSize: !Ref MinInstances
-      MaxSize: !Ref MaxInstances
-      DesiredCapacity: !Ref MinInstances
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '1'
       TargetGroupARNs:
-        - !Ref TargetGroup
+        - !Ref MyALBTargetGroup
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-WebServer
-          PropagateAtLaunch: true
-        - Key: Environment
-          Value: !Ref EnvironmentName
+          Value: !Sub ${AWS::StackName}-ASG-Instance
           PropagateAtLaunch: true
 
-  # Scaling Policies
-  ScaleOutPolicy:
+  MyScalingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      PolicyName: !Sub ${EnvironmentName}-ScaleOut-Policy
-      AutoScalingGroupName: !Ref AutoScalingGroup
-      AdjustmentType: ChangeInCapacity
-      ScalingAdjustment: 1
-      Cooldown: 60
-
-  ScaleInPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      PolicyName: !Sub ${EnvironmentName}-ScaleIn-Policy
-      AutoScalingGroupName: !Ref AutoScalingGroup
-      AdjustmentType: ChangeInCapacity
-      ScalingAdjustment: -1
-      Cooldown: 300
-
-  # CloudWatch Alarms for Scaling
-  CPUAlarmHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: Alarm when CPU exceeds threshold
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      Statistic: Average
-      Period: 60
-      EvaluationPeriods: 2
-      Threshold: !Ref ScaleUpThreshold
-      ComparisonOperator: GreaterThanThreshold
-      AlarmActions:
-        - !Ref ScaleOutPolicy
-
-  CPUAlarmLow:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: Alarm when CPU below threshold
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      Threshold: !Ref ScaleDownThreshold
-      ComparisonOperator: LessThanThreshold
-      AlarmActions:
-        - !Ref ScaleInPolicy
+      AutoScalingGroupName: !Ref MyAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 30.0 # Trigger scale-out when CPU utilization exceeds 30%
+        ScaleInCooldown: 120 # Cooldown period in seconds before scaling in
+        ScaleOutCooldown: 60 # Cooldown period in seconds before scaling out again
 
 Outputs:
-  AlbDnsName:
-    Description: DNS name of the Application Load Balancer
+  ALBDNSName:
+    Description: The DNS name of the Application Load Balancer
     Value: !GetAtt ApplicationLoadBalancer.DNSName
     Export:
-      Name: !Sub ${EnvironmentName}-ALB-DNS
-
-  LaunchTemplateName:
-    Description: Name of the Launch Template
-    Value: !Ref LaunchTemplate
-    Export:
-      Name: !Sub ${EnvironmentName}-LaunchTemplate
-
-  AutoScalingGroupName:
-    Description: Name of the Auto Scaling Group
-    Value: !Ref AutoScalingGroup
-    Export:
-      Name: !Sub ${EnvironmentName}-ASG
+      Name: !Sub "${AWS::StackName}-ALB-DNS"
 
   VPCId:
-    Description: ID of the created VPC
+    Description: The ID of the created VPC
     Value: !Ref VPC
-    Export:
-      Name: !Sub ${EnvironmentName}-VPC-ID
+
+  PublicSubnets:
+    Description: The public subnets for the ALB
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+
+  PrivateSubnets:
+    Description: The private subnets for the ASG
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
