@@ -140,26 +140,46 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
+            exec > /var/log/user-data.log 2>&1
+            echo "Starting User Data script"
             yum update -y
-            yum install -y httpd php stress
+
+            # Enable PHP 7.4 on Amazon Linux 2
+            amazon-linux-extras enable php7.4
+            yum install -y httpd php php-cli php-common stress
+
             systemctl start httpd
             systemctl enable httpd
+
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            cat <<EOF > /var/www/html/index.html
+
+            # Homepage with Stress button
+            cat <<EOF > /var/www/html/index.php
+            <!DOCTYPE html>
             <html>
             <body>
             <h1>Hello from $IP / $INSTANCE_ID</h1>
-            <button onclick="fetch('/stress.php', {method: 'GET'}).then(() => console.log('Stressing CPU'));">Stress CPU</button>
+            <form action="stress.php" method="get">
+              <button type="submit">Stress CPU</button>
+            </form>
             </body>
             </html>
             EOF
+
+            # PHP script to stress CPU
             cat <<EOF > /var/www/html/stress.php
             <?php
-            exec('stress --cpu 1 --timeout 60 > /dev/null 2>&1 &');
-            echo "Stressing CPU for 60 seconds";
+            exec('stress --cpu 2 --timeout 300 > /dev/null 2>&1 &');
+            echo "Stressing CPU for 300 seconds...";
             ?>
             EOF
+
+            chown apache:apache /var/www/html/*
+            chmod 644 /var/www/html/*
+
+            echo "User Data script completed"
+      LaunchTemplateName: AutoScalingLabLaunchTemplate
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
