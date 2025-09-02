@@ -200,7 +200,7 @@ Resources:
     Properties:
       EvaluationPeriods: 1
       Statistic: Average
-      Threshold: 15
+      Threshold: 5
       AlarmDescription: Alarm when CPU exceeds 30%
       Period: 60
       ComparisonOperator: GreaterThanThreshold
