@@ -1,6 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Auto Scaling Lab with Apache Web Server
 
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -263,6 +268,7 @@ Resources:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
       PolicyName: ScaleOutPolicy
+      PolicyType: SimpleScaling
       AutoScalingGroupName: !Ref AutoScalingGroup
       AdjustmentType: ChangeInCapacity
       ScalingAdjustment: 1
@@ -323,10 +329,6 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
-
-  LatestAmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
 
 Outputs:
   AlbDnsName:
