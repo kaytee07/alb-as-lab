@@ -141,25 +141,63 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             yum update -y
+            # Install EPEL for stress package
+            amazon-linux-extras install epel -y
             yum install -y httpd php stress
             systemctl start httpd
             systemctl enable httpd
+            
+            # Create web content
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            
             cat <<EOF > /var/www/html/index.html
             <html>
+            <head>
+            <title>Auto Scaling Demo</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; }
+              button { padding: 10px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+              button:hover { background: #45a049; }
+            </style>
+            </head>
             <body>
             <h1>Hello from $IP / $INSTANCE_ID</h1>
-            <button onclick="fetch('/stress.php', {method: 'GET'}).then(() => console.log('Stressing CPU'));">Stress CPU</button>
+            <p>Click the button to stress the CPU and trigger auto scaling:</p>
+            <button onclick="stressCpu()">Stress CPU</button>
+            <p id="status"></p>
+            
+            <script>
+            function stressCpu() {
+              document.getElementById('status').innerText = 'Stressing CPU...';
+              fetch('/stress.php', {method: 'GET'})
+                .then(response => response.text())
+                .then(data => {
+                  document.getElementById('status').innerText = data;
+                  console.log('CPU stress initiated');
+                })
+                .catch(error => {
+                  document.getElementById('status').innerText = 'Error: ' + error;
+                  console.error('Error:', error);
+                });
+            }
+            </script>
             </body>
             </html>
             EOF
+            
+            # Create PHP script for CPU stress
             cat <<EOF > /var/www/html/stress.php
             <?php
-            exec('stress --cpu 1 --timeout 60 > /dev/null 2>&1 &');
-            echo "Stressing CPU for 60 seconds";
+            // Stress CPU for 60 seconds
+            shell_exec('nohup stress --cpu 1 --timeout 60 > /tmp/stress.log 2>&1 &');
+            echo "Stressing CPU for 60 seconds. Check CloudWatch for CPU utilization.";
             ?>
             EOF
+            
+            # Fix permissions
+            chown apache:apache /var/www/html/*
+            chmod 755 /var/www/html/stress.php
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -188,10 +226,10 @@ Resources:
   CPUAlarmHigh:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      EvaluationPeriods: 1
+      EvaluationPeriods: 2
       Statistic: Average
-      Threshold: 
-      AlarmDescription: Alarm when CPU exceeds 30%
+      Threshold: 70
+      AlarmDescription: Alarm when CPU exceeds 70%
       Period: 60
       ComparisonOperator: GreaterThanThreshold
       Namespace: AWS/EC2
@@ -241,3 +279,6 @@ Outputs:
   AlbDnsName:
     Description: DNS name of the Application Load Balancer
     Value: !GetAtt ApplicationLoadBalancer.DNSName
+  WebsiteURL:
+    Description: URL of the website
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
