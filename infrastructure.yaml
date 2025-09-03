@@ -1,11 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Auto Scaling Lab with Apache Web Server
 
-Parameters:
-  LatestAmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
-
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -13,16 +8,9 @@ Resources:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: AutoScalingLab-VPC
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: AutoScalingLab-IGW
 
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -37,9 +25,6 @@ Resources:
       CidrBlock: 10.0.0.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: Public-Subnet-1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -48,9 +33,6 @@ Resources:
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: Public-Subnet-2
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
@@ -58,9 +40,6 @@ Resources:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: Private-Subnet-1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -68,17 +47,11 @@ Resources:
       VpcId: !Ref VPC
       CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: Private-Subnet-2
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: Public-RouteTable
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -103,26 +76,17 @@ Resources:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
-      Tags:
-        - Key: Name
-          Value: NAT-Gateway-EIP
 
   NatGateway:
     Type: AWS::EC2::NatGateway
     Properties:
       AllocationId: !GetAtt NatEIP.AllocationId
       SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: NAT-Gateway
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: Private-RouteTable
 
   PrivateRoute:
     Type: AWS::EC2::Route
@@ -153,9 +117,6 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: ALB-SecurityGroup
 
   Ec2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -167,16 +128,12 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref AlbSecurityGroup
-      Tags:
-        - Key: Name
-          Value: EC2-SecurityGroup
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: ApacheWebServerTemplate
       LaunchTemplateData:
-        ImageId: !Ref LatestAmiId
+        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}'
         InstanceType: t3.micro
         SecurityGroupIds:
           - !Ref Ec2SecurityGroup
@@ -184,6 +141,7 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             yum update -y
+            # Install EPEL for stress package
             amazon-linux-extras install epel -y
             yum install -y httpd php stress
             systemctl start httpd
@@ -232,7 +190,7 @@ Resources:
             cat <<EOF > /var/www/html/stress.php
             <?php
             // Stress CPU for 60 seconds
-            shell_exec('nohup stress --cpu 1 --timeout 60 > /tmp/stress.log 2>&1 &');
+            shell_exec('nohup stress --cpu 2 --timeout 60 > /tmp/stress.log 2>&1 &');
             echo "Stressing CPU for 60 seconds. Check CloudWatch for CPU utilization.";
             ?>
             EOF
@@ -240,14 +198,10 @@ Resources:
             # Fix permissions
             chown apache:apache /var/www/html/*
             chmod 755 /var/www/html/stress.php
-      Tags:
-        - Key: Name
-          Value: Apache-WebServer-LaunchTemplate
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: ApacheWebServer-ASG
       VPCZoneIdentifier:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
@@ -259,42 +213,66 @@ Resources:
       DesiredCapacity: 1
       TargetGroupARNs:
         - !Ref TargetGroup
-      Tags:
-        - Key: Name
-          Value: Apache-WebServer-Instance
-          PropagateAtLaunch: true
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
 
   ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      PolicyName: ScaleOutPolicy
-      PolicyType: SimpleScaling
       AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
       AdjustmentType: ChangeInCapacity
       ScalingAdjustment: 1
+      Cooldown: 60
+
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1
       Cooldown: 60
 
   CPUAlarmHigh:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 30
       AlarmDescription: Alarm when CPU exceeds 30%
+      Period: 60
+      ComparisonOperator: GreaterThanThreshold
       Namespace: AWS/EC2
       MetricName: CPUUtilization
       Dimensions:
         - Name: AutoScalingGroupName
           Value: !Ref AutoScalingGroup
-      Statistic: Average
-      Period: 60
-      EvaluationPeriods: 2
-      Threshold: 30
-      ComparisonOperator: GreaterThanThreshold
       AlarmActions:
         - !Ref ScaleOutPolicy
+      TreatMissingData: notBreaching
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 10
+      AlarmDescription: Alarm when CPU drops below 10%
+      Period: 60
+      ComparisonOperator: LessThanThreshold
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      AlarmActions:
+        - !Ref ScaleInPolicy
+      TreatMissingData: notBreaching
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: ApacheWebServer-ALB
       Scheme: internet-facing
       Subnets:
         - !Ref PublicSubnet1
@@ -302,14 +280,10 @@ Resources:
       SecurityGroups:
         - !Ref AlbSecurityGroup
       Type: application
-      Tags:
-        - Key: Name
-          Value: Apache-WebServer-ALB
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: ApacheWebServer-TG
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VPC
