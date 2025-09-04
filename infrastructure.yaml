@@ -240,6 +240,10 @@ Resources:
         - !Ref TargetGroup
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
+      Tags:
+      - Key: Name
+        Value: !Sub "Taylor-ASInstance-${AWS::StackName}"
+        PropagateAtLaunch: true
 
   ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
@@ -315,7 +319,7 @@ Resources:
       HealthCheckPath: /
       HealthCheckIntervalSeconds: 30
       HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 5
+      HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
       TargetType: instance
 
